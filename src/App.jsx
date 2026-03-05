@@ -141,6 +141,13 @@ function formatTick(yearValue, step) {
   return String(Math.round(yearValue));
 }
 
+function formatTimelineYear(yearValue) {
+  if (!Number.isFinite(yearValue)) return "—";
+  const rounded = Math.round(yearValue);
+  if (rounded < 0) return `${Math.abs(rounded)} BCE`;
+  return String(rounded);
+}
+
 function getType(typeId) {
   return MEDIA_TYPES.find((item) => item.id === typeId) ?? MEDIA_TYPES[0];
 }
@@ -1063,6 +1070,7 @@ function App() {
   const [showRangePanel, setShowRangePanel] = useState(false);
   const [rangeDraft, setRangeDraft] = useState({ raw: "", start: "", end: "", eraId: "" });
   const [rangeError, setRangeError] = useState("");
+  const [lockedRange, setLockedRange] = useState(null);
   const [tocFilter, setTocFilter] = useState(MODE_PRODUCTION);
   const [titleSuggestions, setTitleSuggestions] = useState([]);
   const [titleSearchLoading, setTitleSearchLoading] = useState(false);
@@ -1161,9 +1169,9 @@ function App() {
   }, [timelineState.span]);
 
   useEffect(() => {
-    const vs = clamp(timelineState.end, -100000, presentYear) - timelineState.span;
+    const vs = clamp(timelineState.end, -100000, 100000) - timelineState.span;
     pendingViewStartRef.current = vs;
-  }, [timelineState.end, timelineState.span, presentYear]);
+  }, [timelineState.end, timelineState.span]);
 
   const canvasRef = useRef(null);
   const popupRef = useRef(null);
@@ -1339,6 +1347,10 @@ function App() {
 
   const viewEnd = clamp(timelineState.end, -100000, 100000);
   const viewStart = viewEnd - timelineState.span;
+  const visibleRangeLabel = useMemo(
+    () => `${formatTimelineYear(viewStart)} - ${formatTimelineYear(viewEnd)}`,
+    [viewEnd, viewStart]
+  );
 
   const allKnownYears = useMemo(() => {
     const years = [Math.floor(presentYear)];
@@ -1364,15 +1376,26 @@ function App() {
     };
   }, [allKnownYears, presentYear]);
 
+  const timelineBounds = useMemo(() => {
+    if (!lockedRange) return overviewRange;
+    const start = Math.min(lockedRange.start, lockedRange.end);
+    const end = Math.max(lockedRange.start, lockedRange.end);
+    return {
+      start,
+      end,
+      span: Math.max(1, end - start)
+    };
+  }, [lockedRange, overviewRange]);
+
   const overviewHandle = useMemo(() => {
-    const left = ((viewStart - overviewRange.start) / overviewRange.span) * overviewWidth;
-    const width = Math.max(24, (timelineState.span / overviewRange.span) * overviewWidth);
+    const left = ((viewStart - timelineBounds.start) / timelineBounds.span) * overviewWidth;
+    const width = Math.max(24, (timelineState.span / timelineBounds.span) * overviewWidth);
 
     return {
       left: clamp(left, 0, Math.max(0, overviewWidth - width)),
       width: Math.min(width, overviewWidth)
     };
-  }, [overviewRange.span, overviewRange.start, overviewWidth, timelineState.span, viewStart]);
+  }, [overviewWidth, timelineBounds.span, timelineBounds.start, timelineState.span, viewStart]);
 
   const parsedSearch = useMemo(() => parseSearch(query), [query]);
 
@@ -1457,9 +1480,9 @@ function App() {
         const endYear = lane === MODE_PRODUCTION ? entry.productionEnd : entry.settingEnd;
         const year = Number.isFinite(startYear) ? startYear : endYear;
         if (!Number.isFinite(year)) continue;
-        if (year < overviewRange.start || year > overviewRange.end) continue;
+        if (year < timelineBounds.start || year > timelineBounds.end) continue;
 
-        const x = ((year - overviewRange.start) / overviewRange.span) * overviewWidth;
+        const x = ((year - timelineBounds.start) / timelineBounds.span) * overviewWidth;
         const bucket = `${lane}:${Math.round(x)}`;
         if (byBucket.has(bucket)) continue;
 
@@ -1473,7 +1496,7 @@ function App() {
     }
 
     return Array.from(byBucket.values());
-  }, [filteredEntries, mode, overviewRange.end, overviewRange.span, overviewRange.start, overviewWidth]);
+  }, [filteredEntries, mode, overviewWidth, timelineBounds.end, timelineBounds.span, timelineBounds.start]);
 
   const activeEraIds = useMemo(() => {
     const set = new Set();
@@ -1539,12 +1562,12 @@ function App() {
   }, [canvasRect.height, mode]);
 
   const viewportBufferedRange = useMemo(() => {
-    const pad = Math.max(timelineState.span * VIEWPORT_BUFFER_RATIO, VIEWPORT_BUFFER_MIN_YEARS);
+    const pad = lockedRange ? 0 : Math.max(timelineState.span * VIEWPORT_BUFFER_RATIO, VIEWPORT_BUFFER_MIN_YEARS);
     return {
       start: viewStart - pad,
       end: viewEnd + pad
     };
-  }, [timelineState.span, viewEnd, viewStart]);
+  }, [lockedRange, timelineState.span, viewEnd, viewStart]);
 
   const markers = useMemo(() => {
     const output = [];
@@ -1622,7 +1645,7 @@ function App() {
   }, [markersByLane, mode]);
 
   const clustersByLane = useMemo(() => {
-    const pixelBuffer = Math.max(50, canvasRect.width * VIEWPORT_BUFFER_RATIO);
+    const pixelBuffer = lockedRange ? 0 : Math.max(50, canvasRect.width * VIEWPORT_BUFFER_RATIO);
     const minX = -pixelBuffer;
     const maxX = canvasRect.width + pixelBuffer;
     const inBufferedViewport = (item) => item.x >= minX && item.x <= maxX;
@@ -1643,7 +1666,7 @@ function App() {
         canvasRect.width
       ).filter(inBufferedViewport)
     };
-  }, [canvasRect.width, laneCaps, markersByLane, timelineState.span, viewStart]);
+  }, [canvasRect.width, laneCaps, lockedRange, markersByLane, timelineState.span, viewStart]);
 
   const allRenderItems = useMemo(() => {
     const combined = [...(clustersByLane[MODE_PRODUCTION] || []), ...(clustersByLane[MODE_SETTING] || [])].sort((a, b) => a.x - b.x);
@@ -1863,8 +1886,8 @@ function App() {
     return laneValues.reduce((sum, value) => sum + value, 0) / laneValues.length;
   }, [canvasRect.height, lanes]);
 
-  const atLeftBoundary = useMemo(() => viewStart <= overviewRange.start + 0.5, [overviewRange.start, viewStart]);
-  const atRightBoundary = useMemo(() => viewEnd >= overviewRange.end - 0.5, [overviewRange.end, viewEnd]);
+  const atLeftBoundary = useMemo(() => viewStart <= timelineBounds.start + 0.5, [timelineBounds.start, viewStart]);
+  const atRightBoundary = useMemo(() => viewEnd >= timelineBounds.end - 0.5, [timelineBounds.end, viewEnd]);
 
   async function runInferenceQueue() {
     if (inferenceRunningRef.current) return;
@@ -1990,10 +2013,10 @@ function App() {
   }
 
   function applyTimelineWindow(nextStart, nextSpan = timelineState.span) {
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const span = clamp(nextSpan, 0.4, maxSpan);
-    const maxStart = overviewRange.end - span;
-    const start = clamp(nextStart, overviewRange.start, maxStart);
+    const maxStart = timelineBounds.end - span;
+    const start = clamp(nextStart, timelineBounds.start, maxStart);
 
     setTimelineState((current) => ({
       ...current,
@@ -2010,11 +2033,11 @@ function App() {
     }
 
     const fromSpan = timelineState.span;
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const toSpan = clamp(targetSpan, 0.4, maxSpan);
     pendingZoomSpanRef.current = toSpan;
-    const maxStart = overviewRange.end - toSpan;
-    const toStart = clamp(targetYear - toSpan / 2, overviewRange.start, maxStart);
+    const maxStart = timelineBounds.end - toSpan;
+    const toStart = clamp(targetYear - toSpan / 2, timelineBounds.start, maxStart);
     const fromStart = viewStart;
     const startTime = performance.now();
     const duration = 380;
@@ -2047,10 +2070,10 @@ function App() {
 
     const fromSpan = pendingZoomSpanRef.current;
     const fromStart = pendingViewStartRef.current;
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const toSpan = clamp(targetSpan, 0.4, maxSpan);
-    const maxStart = overviewRange.end - toSpan;
-    const toStart = clamp(targetStart, overviewRange.start, maxStart);
+    const maxStart = timelineBounds.end - toSpan;
+    const toStart = clamp(targetStart, timelineBounds.start, maxStart);
     const startTime = performance.now();
     const duration = 320;
 
@@ -2090,7 +2113,7 @@ function App() {
   }
 
   function updateSpan(nextSpan, clientX = null) {
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const span = clamp(nextSpan, 0.4, maxSpan);
 
     let anchorRatio = 0.5;
@@ -2179,7 +2202,7 @@ function App() {
 
     // Vertical drag: up = zoom in (smaller span), down = zoom out
     const zoomFactor = Math.exp(dy * 0.005);
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const newSpan = clamp(zoomDragRef.current.span * zoomFactor, 0.4, maxSpan);
 
     // Horizontal drag: pan
@@ -2198,7 +2221,7 @@ function App() {
 
   function onOverviewWheel(event) {
     event.preventDefault();
-    const yearsPerPixel = overviewRange.span / Math.max(1, overviewWidth);
+    const yearsPerPixel = timelineBounds.span / Math.max(1, overviewWidth);
     const deltaYears = event.deltaX * yearsPerPixel * 1.2;
     const nextStart = pendingViewStartRef.current + deltaYears;
     pendingViewStartRef.current = nextStart;
@@ -2211,7 +2234,7 @@ function App() {
     const rect = overviewRef.current.getBoundingClientRect();
     const x = clamp(event.clientX - rect.left, 0, rect.width);
     const ratio = x / rect.width;
-    const targetYear = overviewRange.start + ratio * overviewRange.span;
+    const targetYear = timelineBounds.start + ratio * timelineBounds.span;
 
     const nextStart = targetYear - timelineState.span / 2;
     scheduleTimelineWindow(nextStart, timelineState.span);
@@ -2244,11 +2267,11 @@ function App() {
     if (Math.abs(dx) > 1) overviewRectDragRef.current.moved = true;
 
     // Mini-map behavior: drag up = zoom out, drag down = zoom in.
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const zoomFactor = Math.exp(-dy * 0.005);
     const nextSpan = clamp(overviewRectDragRef.current.startSpan * zoomFactor, 0.4, maxSpan);
 
-    const deltaYear = (dx / overviewRectDragRef.current.rectWidth) * overviewRange.span;
+    const deltaYear = (dx / overviewRectDragRef.current.rectWidth) * timelineBounds.span;
     const nextStartFromCenter = overviewRectDragRef.current.startCenter - nextSpan / 2;
     const nextStart = nextStartFromCenter + deltaYear;
 
@@ -2284,14 +2307,14 @@ function App() {
     const drag = overviewEdgeDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
-    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
-    const minSpan = Math.max(0.4, (24 / Math.max(1, drag.rectWidth)) * overviewRange.span);
+    const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
+    const minSpan = Math.max(0.4, (24 / Math.max(1, drag.rectWidth)) * timelineBounds.span);
     const dx = event.clientX - drag.startX;
-    const deltaYear = (dx / Math.max(1, drag.rectWidth)) * overviewRange.span;
+    const deltaYear = (dx / Math.max(1, drag.rectWidth)) * timelineBounds.span;
 
     if (drag.side === "left") {
       const maxStart = drag.end - minSpan;
-      const nextStart = clamp(drag.start + deltaYear, overviewRange.start, maxStart);
+      const nextStart = clamp(drag.start + deltaYear, timelineBounds.start, maxStart);
       const nextSpan = clamp(drag.end - nextStart, minSpan, maxSpan);
       pendingViewStartRef.current = nextStart;
       pendingZoomSpanRef.current = nextSpan;
@@ -2300,7 +2323,7 @@ function App() {
     }
 
     const minEnd = drag.start + minSpan;
-    const nextEnd = clamp(drag.end + deltaYear, minEnd, overviewRange.end);
+    const nextEnd = clamp(drag.end + deltaYear, minEnd, timelineBounds.end);
     const nextSpan = clamp(nextEnd - drag.start, minSpan, maxSpan);
     pendingViewStartRef.current = drag.start;
     pendingZoomSpanRef.current = nextSpan;
@@ -3100,7 +3123,14 @@ function App() {
     const rangeEnd = Math.max(start, end);
     const span = Math.max(1, rangeEnd - rangeStart);
     setRangeError("");
-    animateTimelineToWindow(rangeStart, span);
+    setLockedRange({ start: rangeStart, end: rangeEnd });
+    pendingViewStartRef.current = rangeStart;
+    pendingZoomSpanRef.current = span;
+    setTimelineState((current) => ({
+      ...current,
+      span,
+      end: rangeStart + span
+    }));
     setShowRangePanel(false);
   }
 
@@ -3129,6 +3159,7 @@ function App() {
 
   function applyAllTimeRange() {
     setRangeError("");
+    setLockedRange(null);
     animateTimelineToWindow(overviewRange.start, overviewRange.span);
     setShowRangePanel(false);
   }
@@ -3139,6 +3170,7 @@ function App() {
         <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
           +
         </button>
+        <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
       </div>
 
       <div className="corner-buttons top-right">
@@ -4526,8 +4558,8 @@ function App() {
           title="Resize overview"
         />
         <div className="overview-label-row">
-          <span>{Math.round(overviewRange.start)}</span>
-          <span>{Math.round(presentYear)} (present)</span>
+          <span>{formatTimelineYear(timelineBounds.start)}</span>
+          <span>{formatTimelineYear(timelineBounds.end)}</span>
         </div>
         <div ref={overviewRef} className="overview-track" style={{ height: `${overviewHeight}px` }} onClick={onOverviewClick} onWheel={onOverviewWheel}>
           <div className="overview-baseline" />

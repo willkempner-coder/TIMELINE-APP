@@ -115,6 +115,22 @@ html, body, #root {
   color: var(--bg);
   border-color: var(--text);
 }
+.live-range-chip {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke-med);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: "Inter", sans-serif;
+  backdrop-filter: blur(6px);
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
 
 .settings-icon svg, .toc-icon svg {
   width: 18px;
