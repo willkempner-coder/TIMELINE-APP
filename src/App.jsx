@@ -1402,37 +1402,9 @@ function App() {
   const filteredEntries = useMemo(() => {
     return entries.filter((entry) => {
       if (soloType !== null && entry.mediaType !== soloType) return false;
-
-      if (parsedSearch.text) {
-        const needle = normalizeSearchText(parsedSearch.text);
-        const haystack = normalizeSearchText(`${entry.title} ${entry.creator} ${entry.mediaType}`);
-        const notes = normalizeSearchText(entry.notes || "");
-        const tagsJoined = normalizeSearchText(Array.isArray(entry.tags) ? entry.tags.join(" ") : "");
-        if (!haystack.includes(needle) && !notes.includes(needle) && !tagsJoined.includes(needle)) {
-          return false;
-        }
-      }
-
-      if (!parsedSearch.yearRange) return true;
-      const [start, end] = parsedSearch.yearRange;
-
-      const prodStart = entry.productionStart ?? entry.productionEnd;
-      const prodEnd = entry.productionEnd ?? entry.productionStart;
-      const setStart = entry.settingStart ?? entry.settingEnd;
-      const setEnd = entry.settingEnd ?? entry.settingStart;
-
-      const productionHit =
-        Number.isFinite(prodStart) && Number.isFinite(prodEnd) && intersects(Math.min(prodStart, prodEnd), Math.max(prodStart, prodEnd), start, end);
-      const settingHit =
-        Number.isFinite(setStart) && Number.isFinite(setEnd) && intersects(Math.min(setStart, setEnd), Math.max(setStart, setEnd), start, end);
-
-      const laneHint = parsedSearch.laneHint || (mode === MODE_BOTH ? null : mode);
-
-      if (laneHint === MODE_SETTING) return settingHit;
-      if (laneHint === MODE_PRODUCTION) return productionHit;
-      return settingHit || productionHit;
+      return true;
     });
-  }, [soloType, entries, mode, parsedSearch]);
+  }, [soloType, entries]);
 
   const searchSuggestions = useMemo(() => {
     const trimmed = query.trim();
