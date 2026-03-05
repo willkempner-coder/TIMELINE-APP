@@ -1069,7 +1069,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [showRangePanel, setShowRangePanel] = useState(false);
-  const [rangeDraft, setRangeDraft] = useState({ raw: "", start: "", end: "", eraId: "" });
+  const [rangeDraft, setRangeDraft] = useState({ raw: "", eraId: "" });
   const [rangeError, setRangeError] = useState("");
   const [lockedRange, setLockedRange] = useState(null);
   const [tocFilter, setTocFilter] = useState(MODE_PRODUCTION);
@@ -1125,7 +1125,6 @@ function App() {
   const preZoomStateRef = useRef(null);
 
   const [darkMode, setDarkMode] = useState(false);
-  const [showLegend, setShowLegend] = useState(false);
   const [inlineNotesOpen, setInlineNotesOpen] = useState(false);
   const [inlineNotesDraft, setInlineNotesDraft] = useState("");
   const [addingTag, setAddingTag] = useState(false);
@@ -3070,8 +3069,6 @@ function App() {
 
     setRangeDraft({
       raw: `${suggested.start}-${suggested.end}`,
-      start: String(suggested.start),
-      end: String(suggested.end),
       eraId: ""
     });
     setRangeError("");
@@ -3104,15 +3101,12 @@ function App() {
   }
 
   function applyManualRange() {
-    let start = parseManualYearInput(rangeDraft.start);
-    let end = parseManualYearInput(rangeDraft.end);
-
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      const parsedFromRaw = parseYearRangeText(rangeDraft.raw);
-      if (parsedFromRaw) {
-        start = parsedFromRaw.start;
-        end = parsedFromRaw.end;
-      }
+    let start;
+    let end;
+    const parsedFromRaw = parseYearRangeText(rangeDraft.raw);
+    if (parsedFromRaw) {
+      start = parsedFromRaw.start;
+      end = parsedFromRaw.end;
     }
 
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
@@ -3142,7 +3136,7 @@ function App() {
     }
 
     if (!nextEraId) {
-      setRangeDraft((current) => ({ ...current, eraId: "", start: "", end: "" }));
+      setRangeDraft((current) => ({ ...current, eraId: "", raw: "" }));
       return;
     }
 
@@ -3151,8 +3145,6 @@ function App() {
     setRangeDraft((current) => ({
       ...current,
       eraId: nextEraId,
-      start: String(era.start),
-      end: String(era.end),
       raw: `${era.start}-${era.end}`
     }));
     setRangeError("");
@@ -3222,16 +3214,6 @@ function App() {
       </div>
 
       <div className="corner-buttons bottom-left">
-        <button
-          className={`glass-btn ${showLegend ? "active" : ""}`}
-          type="button"
-          onClick={() => setShowLegend(v => !v)}
-          title="Media filter legend"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-          </svg>
-        </button>
         <button className="glass-btn settings-icon" type="button" onClick={() => toggleMainMenu("settings")} title="Settings">
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
@@ -3259,12 +3241,43 @@ function App() {
       </div>
 
       <div className="corner-buttons bottom-right">
-        <button className="glass-btn range-icon-btn" type="button" onClick={() => toggleMainMenu("range")} title="Focus year range">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8 4H5v16h3" />
-            <path d="M16 4h3v16h-3" />
-          </svg>
-        </button>
+        {lockedRange ? (
+          <button className="glass-btn range-lock-control" type="button" onClick={() => toggleMainMenu("range")} title="Edit focused range">
+            <span className="range-lock-control-main">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 4H5v16h3" />
+                <path d="M16 4h3v16h-3" />
+              </svg>
+              <span>{`${formatTimelineYear(lockedRange.start)} - ${formatTimelineYear(lockedRange.end)}`}</span>
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              className="range-lock-control-close"
+              aria-label="Exit range focus"
+              onClick={(event) => {
+                event.stopPropagation();
+                clearRangeLock();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  clearRangeLock();
+                }
+              }}
+            >
+              ×
+            </span>
+          </button>
+        ) : (
+          <button className="glass-btn range-icon-btn" type="button" onClick={() => toggleMainMenu("range")} title="Focus year range">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 4H5v16h3" />
+              <path d="M16 4h3v16h-3" />
+            </svg>
+          </button>
+        )}
         <button className="glass-btn" type="button" onClick={resetCompass} title="Compass reset">
           ⊕
         </button>
@@ -3291,7 +3304,7 @@ function App() {
               event.preventDefault();
               const entry = searchSuggestions[searchActiveIndex];
               if (entry) {
-                setQuery(entry.title);
+                setQuery("");
                 setSearchFocused(false);
                 setSearchActiveIndex(-1);
                 onTocItemClick(entry);
@@ -3323,7 +3336,7 @@ function App() {
                   onMouseEnter={() => setSearchActiveIndex(index)}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    setQuery(entry.title);
+                    setQuery("");
                     setSearchFocused(false);
                     setSearchActiveIndex(-1);
                     onTocItemClick(entry);
@@ -3663,7 +3676,7 @@ function App() {
             </div>
             <p className="hint">Condense timeline to only the selected years.</p>
             <label>
-              Quick range
+              Range
               <input
                 value={rangeDraft.raw}
                 onChange={(event) => {
@@ -3673,30 +3686,6 @@ function App() {
                 placeholder="1800-1900"
               />
             </label>
-            <div className="range-grid">
-              <label>
-                Start year
-                <input
-                  value={rangeDraft.start}
-                  onChange={(event) => {
-                    setRangeDraft((current) => ({ ...current, start: event.target.value, eraId: "" }));
-                    setRangeError("");
-                  }}
-                  placeholder="1800"
-                />
-              </label>
-              <label>
-                End year
-                <input
-                  value={rangeDraft.end}
-                  onChange={(event) => {
-                    setRangeDraft((current) => ({ ...current, end: event.target.value, eraId: "" }));
-                    setRangeError("");
-                  }}
-                  placeholder="1900"
-                />
-              </label>
-            </div>
             <label>
               Era preset
               <select
@@ -4658,48 +4647,6 @@ function App() {
           <span>Inferring: {inferenceUi.running} active, {inferenceUi.queued} queued</span>
         ) : null}
       </div>
-
-      {showLegend ? (
-        <div className="legend-panel">
-          <h3>Mode</h3>
-          <div className="legend-mode-row">
-            {[MODE_SETTING, MODE_PRODUCTION, MODE_BOTH].map(m => (
-              <button
-                key={m}
-                className={`legend-mode-btn ${mode === m ? "active" : ""}`}
-                onClick={() => {
-                  setMode(m);
-                  const center = findDensestYear(filteredEntries, m);
-                  if (center != null) animateTimelineToYear(center, Math.min(timelineState.span, 100));
-                }}
-              >
-                {m === MODE_SETTING ? "SET" : m === MODE_PRODUCTION ? "PROD" : "BOTH"}
-              </button>
-            ))}
-          </div>
-          <div className="legend-divider" />
-          <h3>Media type</h3>
-          {MEDIA_TYPES.map(type => (
-            <div
-              key={type.id}
-              className={`legend-type-row ${soloType === type.id ? "solo-active" : ""}`}
-              onClick={() => toggleType(type.id)}
-            >
-              <div className="legend-type-icon">{type.icon}</div>
-              <span className="legend-type-label">{type.label}</span>
-              {soloType === type.id ? <span style={{marginLeft:"auto",fontSize:"0.6rem",opacity:0.7}}>only</span> : null}
-            </div>
-          ))}
-          {soloType !== null ? (
-            <button
-              style={{width:"100%",marginTop:6,fontSize:"0.7rem",padding:"4px",border:"1px solid var(--stroke-med)",borderRadius:5,background:"transparent",color:"var(--muted)",cursor:"pointer"}}
-              onClick={() => setSoloType(null)}
-            >
-              Show all
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
