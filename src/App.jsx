@@ -648,9 +648,10 @@ function resolutionFromSpan(span) {
 
 function formatClusterLabel(item) {
   if (!item || !Number.isFinite(item.year)) return `${item?.size ?? ""} media`.trim();
+  const suffix = item.lane === MODE_SETTING ? "setting" : "media";
   if (item.resolution === "century") {
     const cStart = Math.floor(item.year / 100) * 100;
-    return `${cStart}s media`;
+    return `${cStart}s ${suffix}`;
   }
   if (item.resolution === "decade") {
     const dStart = Math.floor(item.year / 10) * 10;
@@ -674,13 +675,13 @@ function formatClusterLabel(item) {
         const minPart = partOfDecade(minY);
         const maxPart = partOfDecade(maxY);
         if (minPart === maxPart && minPart !== "Mid") {
-          return `${minPart} ${dStart}s media`;
+          return `${minPart} ${dStart}s ${suffix}`;
         }
       }
     }
-    return `${dStart}s media`;
+    return `${dStart}s ${suffix}`;
   }
-  return `${Math.round(item.year)} media`;
+  return `${Math.round(item.year)} ${suffix}`;
 }
 
 function getEntryLaneYear(entry, lane) {
@@ -3164,6 +3165,18 @@ function App() {
     setShowRangePanel(false);
   }
 
+  function clearSearch() {
+    setQuery("");
+    setSearchFocused(false);
+    setSearchActiveIndex(-1);
+  }
+
+  function clearRangeLock() {
+    setLockedRange(null);
+    setRangeError("");
+    setShowRangePanel(false);
+  }
+
   return (
     <div className="timeline-app" data-theme={darkMode ? "dark" : "light"}>
       <div className="corner-buttons top-left">
@@ -3171,6 +3184,12 @@ function App() {
           +
         </button>
         <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
+        {lockedRange ? (
+          <button type="button" className="range-lock-chip" onClick={clearRangeLock} title="Exit range lock">
+            <span>{formatTimelineYear(timelineBounds.start)}-{formatTimelineYear(timelineBounds.end)}</span>
+            <span>×</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="corner-buttons top-right">
@@ -3285,6 +3304,11 @@ function App() {
           }}
           placeholder="Search by title, creator, or year…"
         />
+        {query ? (
+          <button type="button" className="search-clear-btn" onClick={clearSearch} aria-label="Clear search">
+            ×
+          </button>
+        ) : null}
         {searchFocused && searchSuggestions.length > 0 ? (
           <div className="top-search-suggestions">
             {searchSuggestions.map((entry, index) => {
