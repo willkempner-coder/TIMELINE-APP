@@ -104,6 +104,13 @@ function nowYearFraction() {
 }
 
 function defaultState(presentYear) {
+  const defaultStart = 1500;
+  if (presentYear > defaultStart) {
+    return {
+      span: Math.max(1, presentYear - defaultStart),
+      end: presentYear
+    };
+  }
   return {
     span: 140,
     end: presentYear
@@ -208,6 +215,13 @@ function inferSettingRangeHeuristic(title, productionYear) {
   return { settingStart: null, settingEnd: null };
 }
 
+function getGoodreadsProductionYear(row) {
+  return (
+    toYear(row["Original Publication Year"]) ??
+    toYear(row["Year Published"])
+  );
+}
+
 function normalizeEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
 
@@ -282,6 +296,29 @@ function normalizeSearchText(value) {
     .trim();
 }
 
+function parseManualYearInput(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const bceMatch = text.match(/^(\d+)\s*BCE$/i);
+  if (bceMatch) return -Number(bceMatch[1]);
+  return toYear(text);
+}
+
+function parseYearRangeText(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const match = text.match(/^(.+?)\s*(?:-|–|to)\s*(.+)$/i);
+  if (!match) return null;
+  const start = parseManualYearInput(match[1]);
+  const end = parseManualYearInput(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end)
+  };
+}
+
 function fromGoodreadsCsv(csvText) {
   const rows = parseRows(csvText);
 
@@ -291,9 +328,15 @@ function fromGoodreadsCsv(csvText) {
       if (!title) return null;
 
       const creator = (row.Author || "").trim();
-      const prod = toYear(row["Original Publication Year"] || row["Year Published"]);
+      const prod = getGoodreadsProductionYear(row);
       const heuristic = inferSettingRangeHeuristic(title, prod);
       const hasHeuristicSetting = Number.isFinite(heuristic.settingStart) || Number.isFinite(heuristic.settingEnd);
+      const fallbackSetting = !hasHeuristicSetting && Number.isFinite(prod);
+      const settingStart = hasHeuristicSetting ? heuristic.settingStart : fallbackSetting ? prod : null;
+      const settingEnd = hasHeuristicSetting ? heuristic.settingEnd : fallbackSetting ? prod : null;
+      const settingSource = hasHeuristicSetting ? "heuristic" : fallbackSetting ? "production-fallback" : null;
+      const settingConfidence = hasHeuristicSetting ? 0.18 : fallbackSetting ? 0.12 : null;
+      const settingAuto = hasHeuristicSetting || fallbackSetting;
 
       return {
         id: toEntryId("gr"),
@@ -302,12 +345,12 @@ function fromGoodreadsCsv(csvText) {
         creator,
         productionStart: prod,
         productionEnd: prod,
-        settingStart: heuristic.settingStart,
-        settingEnd: heuristic.settingEnd,
+        settingStart,
+        settingEnd,
         source: "goodreads",
-        settingSource: hasHeuristicSetting ? "heuristic" : null,
-        settingConfidence: hasHeuristicSetting ? 0.18 : null,
-        settingAuto: hasHeuristicSetting,
+        settingSource,
+        settingConfidence,
+        settingAuto,
         settingUserLocked: false,
         inferenceStatus: "idle"
       };
@@ -1009,12 +1052,17 @@ function App() {
   const [mode, setMode] = useState(MODE_SETTING);
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "scatter"
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1);
   const [hoveredEntryId, setHoveredEntryId] = useState(null);
   const [hoveredClusterId, setHoveredClusterId] = useState(null);
   const [hoveredRangeMarkerId, setHoveredRangeMarkerId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
+  const [showRangePanel, setShowRangePanel] = useState(false);
+  const [rangeDraft, setRangeDraft] = useState({ raw: "", start: "", end: "", eraId: "" });
+  const [rangeError, setRangeError] = useState("");
   const [tocFilter, setTocFilter] = useState(MODE_PRODUCTION);
   const [titleSuggestions, setTitleSuggestions] = useState([]);
   const [titleSearchLoading, setTitleSearchLoading] = useState(false);
@@ -1035,6 +1083,7 @@ function App() {
   const [burstMap, setBurstMap] = useState({});
   const [flight, setFlight] = useState(null);
   const [importState, setImportState] = useState({ phase: "idle", message: "" });
+  const [importPreview, setImportPreview] = useState(null);
 
   const [inferenceUi, setInferenceUi] = useState({
     queued: 0,
@@ -1120,6 +1169,7 @@ function App() {
   const popupRef = useRef(null);
   const addButtonRef = useRef(null);
   const zoomDragRef = useRef(null);
+  const searchWrapRef = useRef(null);
 
   const overviewRef = useRef(null);
   const overviewRectDragRef = useRef(null);
@@ -1241,6 +1291,17 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!searchWrapRef.current) return;
+      if (searchWrapRef.current.contains(event.target)) return;
+      setSearchFocused(false);
+      setSearchActiveIndex(-1);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  useEffect(() => {
     if (!selectedEntryId) {
       setEditDraft(null);
       setEditMode(false);
@@ -1349,6 +1410,42 @@ function App() {
       return settingHit || productionHit;
     });
   }, [soloType, entries, mode, parsedSearch]);
+
+  const searchSuggestions = useMemo(() => {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const needle = normalizeSearchText(trimmed);
+    const byScore = filteredEntries
+      .map((entry) => {
+        const title = normalizeSearchText(entry.title);
+        const creator = normalizeSearchText(entry.creator);
+        let score = 0;
+        if (needle && title.startsWith(needle)) score += 120;
+        else if (needle && title.includes(needle)) score += 90;
+        if (needle && creator.startsWith(needle)) score += 45;
+        else if (needle && creator.includes(needle)) score += 30;
+        if (!needle) score += 10;
+        const year = entry.productionStart ?? entry.productionEnd ?? entry.settingStart ?? entry.settingEnd ?? -999999;
+        return { entry, score, year };
+      })
+      .filter((row) => row.score > 0 || filteredEntries.length <= 12)
+      .sort((a, b) => (b.score - a.score) || (b.year - a.year));
+
+    return byScore.slice(0, 10).map((row) => row.entry);
+  }, [filteredEntries, query]);
+
+  const importPreviewSelectedCount = useMemo(() => {
+    if (!importPreview) return 0;
+    return importPreview.items.reduce((count, item) => count + (item.include ? 1 : 0), 0);
+  }, [importPreview]);
+
+  useEffect(() => {
+    setSearchActiveIndex((idx) => {
+      if (searchSuggestions.length === 0) return -1;
+      return clamp(idx, -1, searchSuggestions.length - 1);
+    });
+  }, [searchSuggestions]);
 
   const overviewMiniPoints = useMemo(() => {
     const byBucket = new Map();
@@ -1759,6 +1856,15 @@ function App() {
 
     return { x1, y1, x2, y2 };
   }, [canvasRect.height, canvasRect.width, lanes, mode, selectedEntry, timelineState.span, viewStart]);
+
+  const timelineEdgeButtonY = useMemo(() => {
+    const laneValues = Object.values(lanes);
+    if (laneValues.length === 0) return canvasRect.height / 2;
+    return laneValues.reduce((sum, value) => sum + value, 0) / laneValues.length;
+  }, [canvasRect.height, lanes]);
+
+  const atLeftBoundary = useMemo(() => viewStart <= overviewRange.start + 0.5, [overviewRange.start, viewStart]);
+  const atRightBoundary = useMemo(() => viewEnd >= overviewRange.end - 0.5, [overviewRange.end, viewEnd]);
 
   async function runInferenceQueue() {
     if (inferenceRunningRef.current) return;
@@ -2592,7 +2698,10 @@ function App() {
         const productionYear = getEntryLaneYear(entry, MODE_PRODUCTION);
         const settingYear = getEntryLaneYear(entry, MODE_SETTING);
         if (Number.isFinite(productionYear) && Number.isFinite(settingYear)) {
-          animateTimelineToYear((productionYear + settingYear) / 2, zoomSpan);
+          const diagonalYears = Math.abs(productionYear - settingYear);
+          const diagonalSpan = Math.max(12, diagonalYears * 1.75 + 8);
+          const targetSpan = Math.max(zoomSpan, diagonalSpan);
+          animateTimelineToYear((productionYear + settingYear) / 2, targetSpan);
           return;
         }
       }
@@ -2769,7 +2878,7 @@ function App() {
     imported = imported
       .map((entry) => ({
         ...entry,
-        id: toEntryId(source === "goodreads" ? "gr" : "lb"),
+        tempId: toEntryId("preview"),
         productionStart: Number.isFinite(entry.productionStart) ? Math.min(entry.productionStart, Math.floor(presentYear)) : null,
         productionEnd: Number.isFinite(entry.productionEnd) ? Math.min(entry.productionEnd, Math.floor(presentYear)) : entry.productionStart,
         settingStart: Number.isFinite(entry.settingStart) ? Math.min(entry.settingStart, Math.floor(presentYear)) : null,
@@ -2789,23 +2898,101 @@ function App() {
       return;
     }
 
+    setImportPreview({
+      source,
+      fileName: importFile?.name || "",
+      items: imported.map((entry) => ({
+        ...entry,
+        include: true,
+        settingStartInput: Number.isFinite(entry.settingStart) ? String(entry.settingStart) : "",
+        settingEndInput: Number.isFinite(entry.settingEnd) ? String(entry.settingEnd) : ""
+      }))
+    });
+    setImportState({ phase: "idle", message: "" });
+  }
+
+  function closeImportPreview() {
+    setImportPreview(null);
+  }
+
+  function removeImportPreviewItem(tempId) {
+    setImportPreview((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.filter((item) => item.tempId !== tempId)
+      };
+    });
+  }
+
+  function setImportPreviewIncludeAll(include) {
+    setImportPreview((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((item) => ({ ...item, include }))
+      };
+    });
+  }
+
+  function updateImportPreviewItem(tempId, patch) {
+    setImportPreview((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((item) => (item.tempId === tempId ? { ...item, ...patch } : item))
+      };
+    });
+  }
+
+  function applyImportPreview() {
+    if (!importPreview) return;
+
+    const selectedItems = importPreview.items.filter((item) => item.include);
+    if (selectedItems.length === 0) {
+      setImportState({ phase: "error", message: "No selected items to import." });
+      setImportPreview(null);
+      return;
+    }
+
+    const prepared = selectedItems
+      .map((item) => {
+        const manualSettingStart = toYear(item.settingStartInput);
+        const manualSettingEnd = toYear(item.settingEndInput);
+        const hasManualSetting = Number.isFinite(manualSettingStart) || Number.isFinite(manualSettingEnd);
+        const nextSettingStart = hasManualSetting ? (Number.isFinite(manualSettingStart) ? manualSettingStart : manualSettingEnd) : item.settingStart;
+        const nextSettingEnd = hasManualSetting ? (Number.isFinite(manualSettingEnd) ? manualSettingEnd : manualSettingStart) : item.settingEnd;
+
+        return {
+          ...item,
+          id: toEntryId(importPreview.source === "goodreads" ? "gr" : "lb"),
+          settingStart: Number.isFinite(nextSettingStart) ? Math.min(nextSettingStart, Math.floor(presentYear)) : null,
+          settingEnd: Number.isFinite(nextSettingEnd) ? Math.min(nextSettingEnd, Math.floor(presentYear)) : null,
+          settingSource: hasManualSetting ? "manual" : item.settingSource,
+          settingConfidence: hasManualSetting ? null : item.settingConfidence,
+          settingAuto: hasManualSetting ? false : item.settingAuto,
+          settingUserLocked: hasManualSetting ? true : item.settingUserLocked,
+          inferenceStatus: hasManualSetting ? "done" : item.inferenceStatus
+        };
+      });
+
     // Ensure newly imported items are visible instead of hidden by prior filters/lane selection.
     setQuery("");
     setSoloType(null);
     if (mode === MODE_SETTING) setMode(MODE_PRODUCTION);
 
-    setImportState({ phase: "deploying", message: `Deploying ${imported.length} nodes...` });
+    setImportPreview(null);
+    setImportState({ phase: "deploying", message: `Deploying ${prepared.length} nodes...` });
 
-    const importedIds = imported.map((entry) => entry.id);
-
-    imported.forEach((entry, index) => {
+    const importedIds = prepared.map((entry) => entry.id);
+    prepared.forEach((entry, index) => {
       window.setTimeout(() => {
         addEntry(entry, "import");
 
-        if (index === imported.length - 1) {
+        if (index === prepared.length - 1) {
           setImportState({
             phase: "done",
-            message: `Imported ${imported.length} items. SETTING inference running in background...`
+            message: `Imported ${prepared.length} items. SETTING inference running in background...`
           });
           enqueueInference(importedIds);
           setImportFile(null);
@@ -2842,17 +3029,108 @@ function App() {
     setShowToc(false);
   }
 
+  function closeRangePanel() {
+    setShowRangePanel(false);
+    setRangeError("");
+  }
+
+  function openRangePanelFromEdge(side) {
+    const windowStart = Math.round(viewStart);
+    const windowEnd = Math.round(viewEnd);
+    const suggestedSpan = Math.max(10, Math.round(timelineState.span));
+
+    const suggested =
+      side === "left"
+        ? { start: windowStart - suggestedSpan, end: windowStart }
+        : { start: windowEnd, end: windowEnd + suggestedSpan };
+
+    setRangeDraft({
+      raw: `${suggested.start}-${suggested.end}`,
+      start: String(suggested.start),
+      end: String(suggested.end),
+      eraId: ""
+    });
+    setRangeError("");
+    setShowToc(false);
+    setShowAdd(false);
+    setShowSettings(false);
+    setShowRangePanel(true);
+  }
+
   function closeClusterGrid() {
     setGridClusterId(null);
   }
 
   function toggleMainMenu(menu) {
-    const isOpen = menu === "toc" ? showToc : menu === "add" ? showAdd : showSettings;
+    const isOpen =
+      menu === "toc"
+        ? showToc
+        : menu === "add"
+        ? showAdd
+        : menu === "settings"
+        ? showSettings
+        : showRangePanel;
     const next = !isOpen;
 
     setShowToc(next && menu === "toc");
     setShowAdd(next && menu === "add");
     setShowSettings(next && menu === "settings");
+    setShowRangePanel(next && menu === "range");
+    if (!next || menu !== "range") setRangeError("");
+  }
+
+  function applyManualRange() {
+    let start = parseManualYearInput(rangeDraft.start);
+    let end = parseManualYearInput(rangeDraft.end);
+
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      const parsedFromRaw = parseYearRangeText(rangeDraft.raw);
+      if (parsedFromRaw) {
+        start = parsedFromRaw.start;
+        end = parsedFromRaw.end;
+      }
+    }
+
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      setRangeError("Enter a valid range like 1800-1900.");
+      return;
+    }
+
+    const rangeStart = Math.min(start, end);
+    const rangeEnd = Math.max(start, end);
+    const span = Math.max(1, rangeEnd - rangeStart);
+    setRangeError("");
+    animateTimelineToWindow(rangeStart, span);
+    setShowRangePanel(false);
+  }
+
+  function onRangeEraChange(nextEraId) {
+    if (nextEraId === "__all__") {
+      applyAllTimeRange();
+      return;
+    }
+
+    if (!nextEraId) {
+      setRangeDraft((current) => ({ ...current, eraId: "", start: "", end: "" }));
+      return;
+    }
+
+    const era = HISTORICAL_ERAS.find((item) => item.id === nextEraId);
+    if (!era) return;
+    setRangeDraft((current) => ({
+      ...current,
+      eraId: nextEraId,
+      start: String(era.start),
+      end: String(era.end),
+      raw: `${era.start}-${era.end}`
+    }));
+    setRangeError("");
+  }
+
+  function applyAllTimeRange() {
+    setRangeError("");
+    animateTimelineToWindow(overviewRange.start, overviewRange.span);
+    setShowRangePanel(false);
   }
 
   return (
@@ -2930,17 +3208,81 @@ function App() {
       </div>
 
       <div className="corner-buttons bottom-right">
+        <button className="glass-btn range-icon-btn" type="button" onClick={() => toggleMainMenu("range")} title="Focus year range">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 4H5v16h3" />
+            <path d="M16 4h3v16h-3" />
+          </svg>
+        </button>
         <button className="glass-btn" type="button" onClick={resetCompass} title="Compass reset">
           ⊕
         </button>
       </div>
 
-      <div className="top-center-search">
+      <div className="top-center-search" ref={searchWrapRef}>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onFocus={() => setSearchFocused(true)}
+          onKeyDown={(event) => {
+            if (!searchFocused || searchSuggestions.length === 0) return;
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setSearchActiveIndex((idx) => clamp(idx + 1, 0, searchSuggestions.length - 1));
+              return;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setSearchActiveIndex((idx) => clamp(idx - 1, -1, searchSuggestions.length - 1));
+              return;
+            }
+            if (event.key === "Enter" && searchActiveIndex >= 0) {
+              event.preventDefault();
+              const entry = searchSuggestions[searchActiveIndex];
+              if (entry) {
+                setQuery(entry.title);
+                setSearchFocused(false);
+                setSearchActiveIndex(-1);
+                onTocItemClick(entry);
+              }
+            }
+            if (event.key === "Escape") {
+              setSearchFocused(false);
+              setSearchActiveIndex(-1);
+            }
+          }}
           placeholder="Search by title, creator, or year…"
         />
+        {searchFocused && searchSuggestions.length > 0 ? (
+          <div className="top-search-suggestions">
+            {searchSuggestions.map((entry, index) => {
+              const isActive = index === searchActiveIndex;
+              const markerColor = entry.color || colorForMediaType(entry.mediaType);
+              const metaYear = entry.productionStart ?? entry.productionEnd ?? entry.settingStart ?? entry.settingEnd;
+              return (
+                <button
+                  key={`search-s-${entry.id}`}
+                  type="button"
+                  className={`top-search-suggestion-item ${isActive ? "active" : ""}`}
+                  onMouseEnter={() => setSearchActiveIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setQuery(entry.title);
+                    setSearchFocused(false);
+                    setSearchActiveIndex(-1);
+                    onTocItemClick(entry);
+                  }}
+                >
+                  <span className="top-search-swatch" style={{ background: markerColor }} />
+                  <span className="top-search-item-text">
+                    <strong>{entry.title}</strong>
+                    <small>{getType(entry.mediaType).label}{entry.creator ? ` · ${entry.creator}` : ""}{Number.isFinite(metaYear) ? ` · ${Math.round(metaYear)}` : ""}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
       {hoveredHeadline ? <div className="hover-headline">{hoveredHeadline}</div> : null}
 
@@ -3180,6 +3522,150 @@ function App() {
         </div>
       ) : null}
 
+      {importPreview ? (
+        <div className="panel-overlay import-preview-overlay" onPointerDown={closeImportPreview}>
+          <aside className="import-preview-sheet" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="panel-head-row">
+              <h2>Review Import</h2>
+              <button className="close-x-btn" type="button" onClick={closeImportPreview} aria-label="Close import preview">
+                ×
+              </button>
+            </div>
+            <p className="hint">
+              {importPreview.fileName || "Import file"} · {importPreview.source === "goodreads" ? "Goodreads" : "Letterboxd"} · {importPreviewSelectedCount}/{importPreview.items.length} selected
+            </p>
+            <div className="import-preview-toolbar">
+              <button type="button" onClick={() => setImportPreviewIncludeAll(true)}>Select all</button>
+              <button type="button" onClick={() => setImportPreviewIncludeAll(false)}>Deselect all</button>
+            </div>
+
+            <div className="import-preview-list">
+              {importPreview.items.map((item) => (
+                <div key={item.tempId} className={`import-preview-row ${item.include ? "" : "excluded"}`}>
+                  <label className="import-preview-include">
+                    <input
+                      type="checkbox"
+                      checked={item.include}
+                      onChange={(event) => updateImportPreviewItem(item.tempId, { include: event.target.checked })}
+                    />
+                  </label>
+                  <div className="import-preview-main">
+                    <div className="import-preview-title-row">
+                      <span className="import-preview-dot" style={{ background: item.color || colorForMediaType(item.mediaType) }} />
+                      <strong>{item.title}</strong>
+                      <button
+                        type="button"
+                        className="import-preview-remove"
+                        onClick={() => removeImportPreviewItem(item.tempId)}
+                        title="Remove from import"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <small>{getType(item.mediaType).label}{item.creator ? ` · ${item.creator}` : ""} · P {item.productionStart ?? "?"}{item.productionEnd && item.productionEnd !== item.productionStart ? `–${item.productionEnd}` : ""}</small>
+                    <div className="import-preview-setting-grid">
+                      <label>
+                        SETTING start
+                        <input
+                          value={item.settingStartInput}
+                          onChange={(event) => updateImportPreviewItem(item.tempId, { settingStartInput: event.target.value })}
+                          placeholder="year"
+                          inputMode="numeric"
+                        />
+                      </label>
+                      <label>
+                        SETTING end
+                        <input
+                          value={item.settingEndInput}
+                          onChange={(event) => updateImportPreviewItem(item.tempId, { settingEndInput: event.target.value })}
+                          placeholder="year"
+                          inputMode="numeric"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="import-preview-actions">
+              <button type="button" onClick={closeImportPreview}>Cancel</button>
+              <button type="button" className="primary-btn" onClick={applyImportPreview}>Import Selected</button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {showRangePanel ? (
+        <div className="panel-overlay menu-range" onPointerDown={closeRangePanel}>
+          <aside className="sheet range-sheet" onPointerDown={(event) => event.stopPropagation()}>
+            <div className="panel-head-row">
+              <h2>Range Focus</h2>
+              <button className="close-x-btn" type="button" onClick={closeRangePanel} aria-label="Close range focus">
+                ×
+              </button>
+            </div>
+            <p className="hint">Condense timeline to only the selected years.</p>
+            <label>
+              Quick range
+              <input
+                value={rangeDraft.raw}
+                onChange={(event) => {
+                  setRangeDraft((current) => ({ ...current, raw: event.target.value, eraId: "" }));
+                  setRangeError("");
+                }}
+                placeholder="1800-1900"
+              />
+            </label>
+            <div className="range-grid">
+              <label>
+                Start year
+                <input
+                  value={rangeDraft.start}
+                  onChange={(event) => {
+                    setRangeDraft((current) => ({ ...current, start: event.target.value, eraId: "" }));
+                    setRangeError("");
+                  }}
+                  placeholder="1800"
+                />
+              </label>
+              <label>
+                End year
+                <input
+                  value={rangeDraft.end}
+                  onChange={(event) => {
+                    setRangeDraft((current) => ({ ...current, end: event.target.value, eraId: "" }));
+                    setRangeError("");
+                  }}
+                  placeholder="1900"
+                />
+              </label>
+            </div>
+            <label>
+              Era preset
+              <select
+                value={rangeDraft.eraId}
+                onChange={(event) => onRangeEraChange(event.target.value)}
+              >
+                <option value="__all__">ALL TIME</option>
+                <option value="">Custom</option>
+                {HISTORICAL_ERAS.map((era) => (
+                  <option key={era.id} value={era.id}>
+                    {era.label} ({era.start}–{era.end})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={applyAllTimeRange}>ALL TIME</button>
+            {rangeError ? <p className="range-error">{rangeError}</p> : null}
+            <div className="range-actions">
+              <button type="button" onClick={closeRangePanel}>Cancel</button>
+              <button type="button" className="primary-btn" onClick={applyManualRange}>Apply Range</button>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {showSettings ? (
         <div className="panel-overlay menu-settings" onPointerDown={closeSettingsPanel}>
           <aside className="sheet settings-sheet" onPointerDown={(event) => event.stopPropagation()}>
@@ -3373,7 +3859,7 @@ function App() {
                   <button type="submit" className="primary-btn">
                     Save
                   </button>
-                  <button type="button" onClick={() => deleteEntry(selectedEntry.id)}>
+                  <button type="button" className="danger-btn" onClick={() => deleteEntry(selectedEntry.id)}>
                     Delete
                   </button>
                   <button type="button" onClick={closePopup}>
@@ -3845,6 +4331,30 @@ function App() {
                 background: flight.color
               }}
             />
+          ) : null}
+
+          {atLeftBoundary ? (
+            <button
+              type="button"
+              className="timeline-edge-expand-btn left"
+              style={{ top: `${timelineEdgeButtonY}px` }}
+              onClick={() => openRangePanelFromEdge("left")}
+              title="Expand earlier years"
+            >
+              +
+            </button>
+          ) : null}
+
+          {atRightBoundary ? (
+            <button
+              type="button"
+              className="timeline-edge-expand-btn right"
+              style={{ top: `${timelineEdgeButtonY}px` }}
+              onClick={() => openRangePanelFromEdge("right")}
+              title="Expand later years"
+            >
+              +
+            </button>
           ) : null}
         </div>
 
