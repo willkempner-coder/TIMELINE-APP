@@ -56,6 +56,16 @@ const UNIFIED_COLORS = [
   "#1a3d80", "#2962b8", "#3B7A57", "#507060",
   "#8B6914", "#306080", "#A0522D", "#5B4080"
 ];
+const MEDIA_TYPE_COLORS = {
+  book: "#3f6f52",
+  movie: "#2f6ea3",
+  television: "#4b5fa8",
+  podcast: "#6b4aa2",
+  theater: "#8a4f34",
+  photo: "#2f7a78",
+  painting: "#8f5c39",
+  article: "#6a5f4a"
+};
 
 const SAMPLE = USE_SEED_DATA ? INITIAL_DATA : [];
 
@@ -134,6 +144,14 @@ function colorFor(entryId) {
     hash = (hash * 33 + entryId.charCodeAt(i)) % 100000;
   }
   return UNIFIED_COLORS[hash % UNIFIED_COLORS.length];
+}
+
+function colorForMediaType(typeId) {
+  return MEDIA_TYPE_COLORS[typeId] || "#1c1a17";
+}
+
+function spreadX(centerX, index, total, spacing) {
+  return centerX + (index - (total - 1) / 2) * spacing;
 }
 
 function intersects(aStart, aEnd, bStart, bEnd) {
@@ -1002,6 +1020,7 @@ function App() {
   const [popupOrigin, setPopupOrigin] = useState({ x: 0, y: 0 });
   const [popupClosing, setPopupClosing] = useState(false);
   const [expandedClusterId, setExpandedClusterId] = useState(null);
+  const [expandedBranchType, setExpandedBranchType] = useState(null);
   const [gridClusterId, setGridClusterId] = useState(null);
   const [burstMap, setBurstMap] = useState({});
   const [flight, setFlight] = useState(null);
@@ -1145,6 +1164,29 @@ function App() {
 
     observer.observe(overviewRef.current);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    // Prevent browser/page pinch-zoom so trackpad pinch controls timeline zoom.
+    const preventGestureZoom = (event) => event.preventDefault();
+    const preventBrowserPinchWheel = (event) => {
+      if (event.ctrlKey || event.metaKey) event.preventDefault();
+    };
+
+    canvas.addEventListener("gesturestart", preventGestureZoom, { passive: false });
+    canvas.addEventListener("gesturechange", preventGestureZoom, { passive: false });
+    canvas.addEventListener("gestureend", preventGestureZoom, { passive: false });
+    canvas.addEventListener("wheel", preventBrowserPinchWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener("gesturestart", preventGestureZoom);
+      canvas.removeEventListener("gesturechange", preventGestureZoom);
+      canvas.removeEventListener("gestureend", preventGestureZoom);
+      canvas.removeEventListener("wheel", preventBrowserPinchWheel);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -1526,6 +1568,7 @@ function App() {
   useEffect(() => {
     // Prevent stale floating branch artifacts when switching timeline modes.
     setExpandedClusterId(null);
+    setExpandedBranchType(null);
   }, [mode, viewMode]);
 
   useEffect(() => {
@@ -1568,42 +1611,67 @@ function App() {
     return map;
   }, [entries]);
 
-  const expandedBranchEntries = useMemo(() => {
+  const expandedBranchData = useMemo(() => {
     if (!expandedCluster) {
       return {
-        production: [],
-        setting: []
+        lane: null,
+        groups: [],
+        activeGroup: null,
+        activeEntries: []
       };
     }
 
     const ids = Array.from(new Set(expandedCluster.markers.map((marker) => marker.entryId)));
     let branchBudget = Math.max(0, MAX_RENDERED_NODES - baseRenderedUnits);
-    const production = [];
-    const setting = [];
-    const showProductionLane = expandedCluster.lane === MODE_PRODUCTION;
-    const showSettingLane = expandedCluster.lane === MODE_SETTING;
+    const lane = expandedCluster.lane;
+    const laneEntries = [];
 
     for (const id of ids) {
       if (branchBudget <= 0) break;
       const entry = entryById.get(id);
       if (!entry) continue;
 
-      const canShowProduction = showProductionLane && Number.isFinite(entry.productionStart);
-      const canShowSetting = showSettingLane && Number.isFinite(entry.settingStart);
-
-      if (canShowProduction && branchBudget > 0) {
-        production.push(entry);
-        branchBudget -= 1;
-      }
-
-      if (canShowSetting && branchBudget > 0) {
-        setting.push(entry);
-        branchBudget -= 1;
-      }
+      const year =
+        lane === MODE_PRODUCTION
+          ? (entry.productionStart ?? entry.productionEnd)
+          : (entry.settingStart ?? entry.settingEnd);
+      if (!Number.isFinite(year)) continue;
+      laneEntries.push({ entry, year });
+      branchBudget -= 1;
     }
 
-    return { production, setting };
-  }, [baseRenderedUnits, entryById, expandedCluster]);
+    const byType = new Map();
+    for (const item of laneEntries) {
+      const typeId = item.entry.mediaType || "article";
+      if (!byType.has(typeId)) byType.set(typeId, []);
+      byType.get(typeId).push(item);
+    }
+
+    const groups = Array.from(byType.entries())
+      .map(([mediaType, items]) => ({
+        mediaType,
+        label: getType(mediaType).label,
+        items: items.sort((a, b) => a.year - b.year),
+        count: items.length
+      }))
+      .sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
+
+    const activeGroup = groups.find((group) => group.mediaType === expandedBranchType) || null;
+
+    return {
+      lane,
+      groups,
+      activeGroup,
+      activeEntries: activeGroup ? activeGroup.items : []
+    };
+  }, [baseRenderedUnits, entryById, expandedBranchType, expandedCluster]);
+
+  useEffect(() => {
+    if (!expandedBranchType) return;
+    if (!expandedBranchData.groups.some((group) => group.mediaType === expandedBranchType)) {
+      setExpandedBranchType(null);
+    }
+  }, [expandedBranchData.groups, expandedBranchType]);
 
   const gridEntries = useMemo(() => {
     if (!gridCluster) return [];
@@ -2031,6 +2099,7 @@ function App() {
       startY: event.clientY,
       startViewStart: pendingViewStartRef.current,
       startSpan: pendingZoomSpanRef.current,
+      startCenter: pendingViewStartRef.current + pendingZoomSpanRef.current / 2,
       moved: false,
       rectWidth: rect.width
     };
@@ -2041,10 +2110,21 @@ function App() {
   function onOverviewRectMove(event) {
     if (!overviewRectDragRef.current) return;
     const dx = event.clientX - overviewRectDragRef.current.startX;
+    const dy = event.clientY - overviewRectDragRef.current.startY;
     if (Math.abs(dx) > 1) overviewRectDragRef.current.moved = true;
+
+    // Mini-map behavior: drag up = zoom out, drag down = zoom in.
+    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const zoomFactor = Math.exp(-dy * 0.005);
+    const nextSpan = clamp(overviewRectDragRef.current.startSpan * zoomFactor, 0.4, maxSpan);
+
     const deltaYear = (dx / overviewRectDragRef.current.rectWidth) * overviewRange.span;
-    const nextStart = overviewRectDragRef.current.startViewStart + deltaYear;
-    scheduleTimelineWindow(nextStart, overviewRectDragRef.current.startSpan);
+    const nextStartFromCenter = overviewRectDragRef.current.startCenter - nextSpan / 2;
+    const nextStart = nextStartFromCenter + deltaYear;
+
+    pendingZoomSpanRef.current = nextSpan;
+    pendingViewStartRef.current = nextStart;
+    scheduleTimelineWindow(nextStart, nextSpan);
   }
 
   function onOverviewRectUp(event) {
@@ -2639,10 +2719,15 @@ function App() {
     if (mode === MODE_BOTH || cluster.size > 24) {
       setGridClusterId((current) => (current === cluster.id ? null : cluster.id));
       setExpandedClusterId(null);
+      setExpandedBranchType(null);
       return;
     }
 
-    setExpandedClusterId((current) => (current === cluster.id ? null : cluster.id));
+    setExpandedClusterId((current) => {
+      const next = current === cluster.id ? null : cluster.id;
+      if (next !== current) setExpandedBranchType(null);
+      return next;
+    });
     setGridClusterId(null);
   }
 
@@ -3514,7 +3599,7 @@ function App() {
                 <button
                   type="button"
                   className={classes.join(" ")}
-                  style={marker.color ? { background: marker.color } : {}}
+                  style={{ background: marker.color || colorForMediaType(marker.mediaType) }}
                   onMouseEnter={() => {
                     setHoveredEntryId(marker.entryId);
                     if (marker.rangeEnd > marker.rangeStart) setHoveredRangeMarkerId(marker.id);
@@ -3552,7 +3637,7 @@ function App() {
                     style={{
                       left: `${marker.xEnd - marker.xStart}px`,
                       top: "0px",
-                      ...(marker.color ? { background: marker.color } : {})
+                      background: marker.color || colorForMediaType(marker.mediaType)
                     }}
                     onMouseEnter={() => {
                       setHoveredEntryId(marker.entryId);
@@ -3585,59 +3670,57 @@ function App() {
 
           {expandedCluster && mode !== MODE_BOTH
             ? (() => {
-                const baseY = expandedCluster.lane === MODE_PRODUCTION ? lanes[MODE_PRODUCTION] : lanes[MODE_SETTING] ?? canvasRect.height / 2;
+                const branchLane = expandedCluster.lane;
+                const baseY = lanes[branchLane] ?? canvasRect.height / 2;
                 const baseX = expandedCluster.x;
-
-                const productionEntries = expandedBranchEntries.production;
-                const settingEntries = expandedBranchEntries.setting;
-
-                const productionY = (lanes[MODE_PRODUCTION] ?? baseY) - 84;
-                const settingY = (lanes[MODE_SETTING] ?? baseY) + 84;
+                const typeGroups = expandedBranchData.groups;
+                const activeGroup = expandedBranchData.activeGroup;
+                const activeEntries = expandedBranchData.activeEntries;
+                const groupY = branchLane === MODE_PRODUCTION ? baseY - 84 : baseY + 84;
+                const detailY = branchLane === MODE_PRODUCTION ? groupY - 70 : groupY + 70;
+                const groupSpacing = 46;
+                const itemSpacing = 24;
+                const activeGroupIndex = activeGroup ? typeGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+                const activeGroupX = activeGroupIndex >= 0
+                  ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
+                  : baseX;
 
                 return (
                   <>
-                    {productionEntries.map((entry, index) => {
-                      const x = baseX + (index - (productionEntries.length - 1) / 2) * 24;
+                    {typeGroups.map((group, index) => {
+                      const x = spreadX(baseX, index, typeGroups.length, groupSpacing);
+                      const isActiveType = expandedBranchType === group.mediaType;
                       return (
                         <button
-                          key={`prod-branch-${entry.id}`}
+                          key={`branch-type-${expandedCluster.id}-${group.mediaType}`}
                           type="button"
-                          className="node branch-node"
-                          style={{ left: `${x}px`, top: `${productionY}px`, background: entry.color || colorFor(entry.id, MODE_PRODUCTION) }}
-                          onMouseEnter={() => setHoveredEntryId(entry.id)}
-                          onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
-                          onClick={(event) =>
-                            onNodeActivate(
-                              {
-                                entryId: entry.id,
-                                lane: MODE_PRODUCTION,
-                                anchorYear: entry.productionStart ?? entry.productionEnd,
-                                resolution: "year"
-                              },
-                              event
-                            )
-                          }
-                          title={entry.title}
-                        />
+                          className={`node branch-node type-group-node${isActiveType ? " active" : ""}`}
+                          style={{ left: `${x}px`, top: `${groupY}px`, background: colorForMediaType(group.mediaType) }}
+                          onClick={() => setExpandedBranchType((current) => (current === group.mediaType ? null : group.mediaType))}
+                          title={`${group.label}: ${group.count}`}
+                        >
+                          {group.count}
+                        </button>
                       );
                     })}
 
-                    {settingEntries.map((entry, index) => {
-                      const x = baseX + (index - (settingEntries.length - 1) / 2) * 24;
+                    {activeEntries.map((item, index) => {
+                      const entry = item.entry;
+                      const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
                       return (
                         <button
-                          key={`set-branch-${entry.id}`}
+                          key={`branch-entry-${entry.id}`}
                           type="button"
-                          className="node branch-node"
-                          style={{ left: `${x}px`, top: `${settingY}px`, background: entry.color || colorFor(entry.id, MODE_SETTING) }}
+                          className="node branch-node branch-item-node"
+                          style={{ left: `${x}px`, top: `${detailY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
                           onMouseEnter={() => setHoveredEntryId(entry.id)}
                           onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
                           onClick={(event) =>
                             onNodeActivate(
                               {
                                 entryId: entry.id,
-                                lane: MODE_SETTING,
-                                anchorYear: entry.settingStart ?? entry.settingEnd,
+                                lane: branchLane,
+                                anchorYear: item.year,
                                 resolution: "year"
                               },
                               event
@@ -3675,21 +3758,29 @@ function App() {
             style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }}
           >
             {(() => {
-              const baseY = expandedCluster.lane === MODE_PRODUCTION ? lanes[MODE_PRODUCTION] : lanes[MODE_SETTING] ?? canvasRect.height / 2;
+              const branchLane = expandedCluster.lane;
+              const baseY = lanes[branchLane] ?? canvasRect.height / 2;
               const baseX = expandedCluster.x;
-              const productionEntries = expandedBranchEntries.production;
-              const settingEntries = expandedBranchEntries.setting;
-              const productionY = (lanes[MODE_PRODUCTION] ?? baseY) - 84;
-              const settingY = (lanes[MODE_SETTING] ?? baseY) + 84;
+              const typeGroups = expandedBranchData.groups;
+              const activeGroup = expandedBranchData.activeGroup;
+              const activeEntries = expandedBranchData.activeEntries;
+              const groupY = branchLane === MODE_PRODUCTION ? baseY - 84 : baseY + 84;
+              const detailY = branchLane === MODE_PRODUCTION ? groupY - 70 : groupY + 70;
+              const groupSpacing = 46;
+              const itemSpacing = 24;
+              const activeGroupIndex = activeGroup ? typeGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+              const activeGroupX = activeGroupIndex >= 0
+                ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
+                : baseX;
               return (
                 <>
-                  {productionEntries.map((entry, index) => {
-                    const x = baseX + (index - (productionEntries.length - 1) / 2) * 24;
-                    return <line key={`bp-${entry.id}`} x1={baseX} y1={baseY} x2={x} y2={productionY} className="branch-line" />;
+                  {typeGroups.map((group, index) => {
+                    const x = spreadX(baseX, index, typeGroups.length, groupSpacing);
+                    return <line key={`branch-type-line-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
                   })}
-                  {settingEntries.map((entry, index) => {
-                    const x = baseX + (index - (settingEntries.length - 1) / 2) * 24;
-                    return <line key={`bs-${entry.id}`} x1={baseX} y1={baseY} x2={x} y2={settingY} className="branch-line" />;
+                  {activeEntries.map((item, index) => {
+                    const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
+                    return <line key={`branch-item-line-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={x} y2={detailY} className="branch-line" />;
                   })}
                 </>
               );
