@@ -266,10 +266,20 @@ function parseSearch(query) {
     .replace(/\b(SETTING|PRODUCTION|ABOUT|MADE|OF THE ERA)\b/gi, "")
     .replace(/\b\d{3,4}S\b/gi, "")
     .replace(/\b\d{4}\b/g, "")
-    .trim()
-    .toLowerCase();
+    .trim();
 
   return { laneHint, yearRange, text };
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['’`]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function fromGoodreadsCsv(csvText) {
@@ -1310,10 +1320,11 @@ function App() {
       if (soloType !== null && entry.mediaType !== soloType) return false;
 
       if (parsedSearch.text) {
-        const haystack = `${entry.title} ${entry.creator} ${entry.mediaType}`.toLowerCase();
-        if (!haystack.includes(parsedSearch.text) &&
-            !(entry.notes && entry.notes.toLowerCase().includes(parsedSearch.text)) &&
-            !(Array.isArray(entry.tags) && entry.tags.some(t => t.toLowerCase().includes(parsedSearch.text)))) {
+        const needle = normalizeSearchText(parsedSearch.text);
+        const haystack = normalizeSearchText(`${entry.title} ${entry.creator} ${entry.mediaType}`);
+        const notes = normalizeSearchText(entry.notes || "");
+        const tagsJoined = normalizeSearchText(Array.isArray(entry.tags) ? entry.tags.join(" ") : "");
+        if (!haystack.includes(needle) && !notes.includes(needle) && !tagsJoined.includes(needle)) {
           return false;
         }
       }
