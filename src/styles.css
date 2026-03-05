@@ -755,6 +755,8 @@ html, body, #root {
   inset: 0;
   width: 100%; height: 100%;
   touch-action: none;
+  overflow: hidden;
+  contain: layout paint style;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
@@ -789,17 +791,19 @@ html, body, #root {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  contain: layout paint style;
   user-select: none;
   -webkit-user-select: none;
 }
 .node-stack {
   position: absolute;
-  transform: translate(-50%, -50%);
+  transform: translate3d(-50%, -50%, 0);
   pointer-events: none;
+  will-change: transform, opacity;
 }
 .node {
   position: absolute;
-  transform: translate(-50%, -50%);
+  transform: translate3d(-50%, -50%, 0);
   width: 14px;
   height: 14px;
   border-radius: 999px;
@@ -815,10 +819,10 @@ html, body, #root {
   cursor: pointer;
   pointer-events: auto;
   will-change: transform;
-  transition: transform 120ms ease;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease, opacity 160ms ease;
   box-shadow: var(--shadow-sm);
 }
-.node:hover { transform: translate(-50%, -50%) scale(1.28); }
+.node:hover { transform: translate3d(-50%, -50%, 0) scale(1.22); }
 .node.end-cap { width: 9px; height: 9px; border-width: 1.5px; }
 .node-label {
   position: absolute;
@@ -844,7 +848,7 @@ html, body, #root {
   color: var(--node-text);
   font-size: 0.68rem;
   font-weight: 600;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
 }
 .node.branch-node { width: 14px; height: 14px; border-width: 1px; }
 
@@ -1029,6 +1033,7 @@ html, body, #root {
   border: 1px solid var(--stroke-strong);
   background: var(--overview-handle-bg);
   cursor: grab;
+  transition: left 140ms ease, width 140ms ease, background-color 120ms ease;
 }
 .overview-handle:active { cursor: grabbing; }
 
@@ -1105,6 +1110,19 @@ html, body, #root {
 .scatter-point:hover { opacity: 0.7; }
 .scatter-point-label { fill: var(--text); font-size: 10px; pointer-events: none; font-family: "EB Garamond", Georgia, serif; }
 .scatter-point-group:hover .scatter-point { filter: drop-shadow(0 0 4px rgba(0,0,0,0.3)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .node,
+  .overview-handle,
+  .branch-line,
+  .selected-dual-link,
+  .node-popup,
+  .node-popup.closing,
+  .flight-node {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 .scatter-legend {
   position: absolute;
   bottom: 60px; right: 20px;

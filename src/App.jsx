@@ -1486,9 +1486,15 @@ function App() {
     return capRenderItemsByUnits(sampled, timelineState.span, MAX_RENDERED_NODES);
   }, [clustersByLane, timelineState.span]);
 
-  const hasProductionClusters = useMemo(() => {
-    return allRenderItems.some((item) => item.type === "cluster" && item.lane === MODE_PRODUCTION);
-  }, [allRenderItems]);
+  const visibleRenderItems = useMemo(() => {
+    const minY = -100;
+    const maxY = canvasRect.height + 100;
+
+    return allRenderItems.filter((item) => {
+      const laneY = lanes[item.lane] ?? canvasRect.height / 2;
+      return Number.isFinite(laneY) && laneY >= minY && laneY <= maxY;
+    });
+  }, [allRenderItems, canvasRect.height, lanes]);
 
   const hoveredHeadline = useMemo(() => {
     if (hoveredEntryId) {
@@ -1496,21 +1502,21 @@ function App() {
       if (entry?.title) return entry.title;
     }
     if (hoveredClusterId) {
-      const cluster = allRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
+      const cluster = visibleRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
       if (cluster) return formatClusterLabel(cluster);
     }
     return "";
-  }, [allRenderItems, entries, hoveredClusterId, hoveredEntryId]);
+  }, [entries, hoveredClusterId, hoveredEntryId, visibleRenderItems]);
 
-  const baseRenderedUnits = useMemo(() => countRenderUnits(allRenderItems, timelineState.span), [allRenderItems, timelineState.span]);
+  const baseRenderedUnits = useMemo(() => countRenderUnits(visibleRenderItems, timelineState.span), [timelineState.span, visibleRenderItems]);
 
   const clusterMap = useMemo(() => {
     const map = new Map();
-    for (const item of allRenderItems) {
+    for (const item of visibleRenderItems) {
       if (item.type === "cluster") map.set(item.id, item);
     }
     return map;
-  }, [allRenderItems]);
+  }, [visibleRenderItems]);
 
   useEffect(() => {
     if (expandedClusterId && !clusterMap.has(expandedClusterId)) setExpandedClusterId(null);
@@ -1521,6 +1527,12 @@ function App() {
     // Prevent stale floating branch artifacts when switching timeline modes.
     setExpandedClusterId(null);
   }, [mode, viewMode]);
+
+  useEffect(() => {
+    if (hoveredClusterId && !clusterMap.has(hoveredClusterId)) {
+      setHoveredClusterId(null);
+    }
+  }, [clusterMap, hoveredClusterId]);
 
   const expandedCluster = expandedClusterId ? clusterMap.get(expandedClusterId) : null;
   const gridCluster = gridClusterId ? clusterMap.get(gridClusterId) : null;
@@ -1541,14 +1553,14 @@ function App() {
   const rangeLines = useMemo(() => {
     if (timelineState.span > 220) return [];
 
-    return allRenderItems
+    return visibleRenderItems
       .filter((item) => item.type === "node")
       .filter((item) => item.marker.rangeEnd > item.marker.rangeStart)
       .map((item) => ({
         marker: item.marker,
         resolution: item.resolution || "year"
       }));
-  }, [allRenderItems, timelineState.span]);
+  }, [timelineState.span, visibleRenderItems]);
 
   const entryById = useMemo(() => {
     const map = new Map();
@@ -3452,18 +3464,9 @@ function App() {
               <span>Press <strong>+</strong> to add something.</span>
             </div>
           ) : null}
-          {allRenderItems.map((item) => {
+          {visibleRenderItems.map((item) => {
             if (item.type === "cluster") {
-              if (mode === MODE_BOTH) {
-                // In BOTH mode, show a single deterministic cluster set (SETTING lane only)
-                // to prevent mixed-lane floating artifacts.
-                if (item.lane !== MODE_SETTING) return null;
-              }
-
-              const laneY =
-                mode === MODE_BOTH
-                  ? (lanes[MODE_SETTING] ?? canvasRect.height / 2)
-                  : (lanes[item.lane] ?? canvasRect.height / 2);
+              const laneY = lanes[item.lane] ?? canvasRect.height / 2;
               return (
                 <button
                   key={item.id}
