@@ -1052,6 +1052,22 @@ html, body, #root {
   transition: left 140ms ease, width 140ms ease, background-color 120ms ease;
 }
 .overview-handle:active { cursor: grabbing; }
+.overview-handle-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.overview-handle-edge.left {
+  left: -4px;
+  border-left: 1px solid var(--stroke-strong);
+}
+.overview-handle-edge.right {
+  right: -4px;
+  border-right: 1px solid var(--stroke-strong);
+}
 
 /* ─── Status bar ─── */
 .status-bar {

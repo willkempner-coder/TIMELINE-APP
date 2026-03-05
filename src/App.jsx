@@ -1054,6 +1054,7 @@ function App() {
   const [soloType, setSoloType] = useState(null); // null = show all, string = solo that type
   const [tocTypeFilter, setTocTypeFilter] = useState(null); // null = show all types in TOC
   const [preZoomState, setPreZoomState] = useState(null); // saved zoom state before node click
+  const preZoomStateRef = useRef(null);
 
   const [darkMode, setDarkMode] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
@@ -1112,6 +1113,7 @@ function App() {
 
   const overviewRef = useRef(null);
   const overviewRectDragRef = useRef(null);
+  const overviewEdgeDragRef = useRef(null);
   const overviewResizeRef = useRef(null);
   const scheduledWindowRef = useRef(null);
   const scheduledWindowRafRef = useRef(null);
@@ -1131,6 +1133,10 @@ function App() {
   const selectedEntryIdRef = useRef(null);
   const popupClosingRef = useRef(false);
   const [popupSize, setPopupSize] = useState({ width: 420, height: 320 });
+
+  useEffect(() => {
+    preZoomStateRef.current = preZoomState;
+  }, [preZoomState]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
@@ -1297,30 +1303,6 @@ function App() {
     };
   }, [overviewRange.span, overviewRange.start, overviewWidth, timelineState.span, viewStart]);
 
-  const overviewMiniPoints = useMemo(() => {
-    const byBucket = new Map();
-    for (const entry of entries) {
-      for (const lane of [MODE_PRODUCTION, MODE_SETTING]) {
-        const year = lane === MODE_PRODUCTION ? entry.productionStart : entry.settingStart;
-        if (!Number.isFinite(year)) continue;
-        if (year < overviewRange.start || year > overviewRange.end) continue;
-
-        const x = ((year - overviewRange.start) / overviewRange.span) * overviewWidth;
-        const bucket = `${lane}:${Math.round(x)}`;
-        if (byBucket.has(bucket)) continue;
-
-        byBucket.set(bucket, {
-          id: `${entry.id}:${lane}`,
-          lane,
-          x: clamp(x, 1, Math.max(1, overviewWidth - 1)),
-          color: entry.color || null
-        });
-      }
-    }
-
-    return Array.from(byBucket.values());
-  }, [entries, overviewRange.end, overviewRange.span, overviewRange.start, overviewWidth]);
-
   const parsedSearch = useMemo(() => parseSearch(query), [query]);
 
   const filteredEntries = useMemo(() => {
@@ -1356,6 +1338,34 @@ function App() {
       return settingHit || productionHit;
     });
   }, [soloType, entries, mode, parsedSearch]);
+
+  const overviewMiniPoints = useMemo(() => {
+    const byBucket = new Map();
+    const lanesToShow = mode === MODE_BOTH ? [MODE_PRODUCTION, MODE_SETTING] : [mode];
+
+    for (const entry of filteredEntries) {
+      for (const lane of lanesToShow) {
+        const startYear = lane === MODE_PRODUCTION ? entry.productionStart : entry.settingStart;
+        const endYear = lane === MODE_PRODUCTION ? entry.productionEnd : entry.settingEnd;
+        const year = Number.isFinite(startYear) ? startYear : endYear;
+        if (!Number.isFinite(year)) continue;
+        if (year < overviewRange.start || year > overviewRange.end) continue;
+
+        const x = ((year - overviewRange.start) / overviewRange.span) * overviewWidth;
+        const bucket = `${lane}:${Math.round(x)}`;
+        if (byBucket.has(bucket)) continue;
+
+        byBucket.set(bucket, {
+          id: `${entry.id}:${lane}`,
+          lane,
+          x: clamp(x, 1, Math.max(1, overviewWidth - 1)),
+          color: entry.color || null
+        });
+      }
+    }
+
+    return Array.from(byBucket.values());
+  }, [filteredEntries, mode, overviewRange.end, overviewRange.span, overviewRange.start, overviewWidth]);
 
   const activeEraIds = useMemo(() => {
     const set = new Set();
@@ -1480,6 +1490,11 @@ function App() {
     return grouped;
   }, [markers]);
 
+  const visibleEntryCount = useMemo(() => {
+    const ids = new Set(markers.map((marker) => marker.entryId));
+    return ids.size;
+  }, [markers]);
+
   const laneCaps = useMemo(() => {
     if (mode === MODE_PRODUCTION) {
       return {
@@ -1594,8 +1609,6 @@ function App() {
   }, [timelineState.span, viewEnd, viewStart, showMonthResolution]);
 
   const rangeLines = useMemo(() => {
-    if (timelineState.span > 220) return [];
-
     return visibleRenderItems
       .filter((item) => item.type === "node")
       .filter((item) => item.marker.rangeEnd > item.marker.rangeStart)
@@ -1603,7 +1616,7 @@ function App() {
         marker: item.marker,
         resolution: item.resolution || "year"
       }));
-  }, [timelineState.span, visibleRenderItems]);
+  }, [visibleRenderItems]);
 
   const entryById = useMemo(() => {
     const map = new Map();
@@ -2133,6 +2146,57 @@ function App() {
     event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
+  function onOverviewEdgeDown(side, event) {
+    event.stopPropagation();
+    if (!overviewRef.current) return;
+    const rect = overviewRef.current.getBoundingClientRect();
+    const start = pendingViewStartRef.current;
+    const span = pendingZoomSpanRef.current;
+    overviewEdgeDragRef.current = {
+      pointerId: event.pointerId,
+      side,
+      startX: event.clientX,
+      rectWidth: rect.width,
+      start,
+      end: start + span
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onOverviewEdgeMove(event) {
+    const drag = overviewEdgeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const maxSpan = Math.max(0.4, overviewRange.end - overviewRange.start);
+    const minSpan = Math.max(0.4, (24 / Math.max(1, drag.rectWidth)) * overviewRange.span);
+    const dx = event.clientX - drag.startX;
+    const deltaYear = (dx / Math.max(1, drag.rectWidth)) * overviewRange.span;
+
+    if (drag.side === "left") {
+      const maxStart = drag.end - minSpan;
+      const nextStart = clamp(drag.start + deltaYear, overviewRange.start, maxStart);
+      const nextSpan = clamp(drag.end - nextStart, minSpan, maxSpan);
+      pendingViewStartRef.current = nextStart;
+      pendingZoomSpanRef.current = nextSpan;
+      scheduleTimelineWindow(nextStart, nextSpan);
+      return;
+    }
+
+    const minEnd = drag.start + minSpan;
+    const nextEnd = clamp(drag.end + deltaYear, minEnd, overviewRange.end);
+    const nextSpan = clamp(nextEnd - drag.start, minSpan, maxSpan);
+    pendingViewStartRef.current = drag.start;
+    pendingZoomSpanRef.current = nextSpan;
+    scheduleTimelineWindow(drag.start, nextSpan);
+  }
+
+  function onOverviewEdgeUp(event) {
+    const drag = overviewEdgeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    overviewEdgeDragRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
   function onOverviewResizeDown(event) {
     overviewResizeRef.current = {
       pointerId: event.pointerId,
@@ -2374,8 +2438,10 @@ function App() {
   function closePopup() {
     if (!selectedEntryId) return;
 
-    if (preZoomState) {
-      animateTimelineToWindow(preZoomState.viewStart, preZoomState.span);
+    const restore = preZoomStateRef.current;
+    if (restore) {
+      animateTimelineToWindow(restore.viewStart, restore.span);
+      preZoomStateRef.current = null;
       setPreZoomState(null);
     }
 
@@ -2405,8 +2471,10 @@ function App() {
       clearTimeout(titleSearchTimerRef.current);
       titleSearchTimerRef.current = null;
     }
-    if (preZoomState) {
-      animateTimelineToWindow(preZoomState.viewStart, preZoomState.span);
+    const restore = preZoomStateRef.current;
+    if (restore) {
+      animateTimelineToWindow(restore.viewStart, restore.span);
+      preZoomStateRef.current = null;
       setPreZoomState(null);
     }
     setPopupClosing(false);
@@ -2499,10 +2567,14 @@ function App() {
     const zoomSpan = nextZoomSpanForResolution(effectiveResolution);
     if (zoomSpan && Number.isFinite(anchorYear)) {
       // Save current zoom state so we can restore it on close
-      setPreZoomState((prev) => prev || {
-        span: pendingZoomSpanRef.current,
-        viewStart: pendingViewStartRef.current
-      });
+      if (!preZoomStateRef.current) {
+        const snapshot = {
+          span: pendingZoomSpanRef.current,
+          viewStart: pendingViewStartRef.current
+        };
+        preZoomStateRef.current = snapshot;
+        setPreZoomState(snapshot);
+      }
 
       // In BOTH mode, center the midpoint of the production<->setting pair (diagonal link center).
       if (mode === MODE_BOTH && entry) {
@@ -2561,10 +2633,14 @@ function App() {
 
     if (Number.isFinite(targetYear)) {
       const zoomSpan = nextZoomSpanForResolution(resolutionFromSpan(pendingZoomSpanRef.current));
-      setPreZoomState((prev) => prev || {
-        span: pendingZoomSpanRef.current,
-        viewStart: pendingViewStartRef.current
-      });
+      if (!preZoomStateRef.current) {
+        const snapshot = {
+          span: pendingZoomSpanRef.current,
+          viewStart: pendingViewStartRef.current
+        };
+        preZoomStateRef.current = snapshot;
+        setPreZoomState(snapshot);
+      }
       animateTimelineToYear(targetYear, zoomSpan ?? pendingZoomSpanRef.current);
     }
   }
@@ -2688,12 +2764,24 @@ function App() {
         settingStart: Number.isFinite(entry.settingStart) ? Math.min(entry.settingStart, Math.floor(presentYear)) : null,
         settingEnd: Number.isFinite(entry.settingEnd) ? Math.min(entry.settingEnd, Math.floor(presentYear)) : entry.settingStart
       }))
-      .filter((entry) => entry.title && (Number.isFinite(entry.productionStart) || Number.isFinite(entry.settingStart)));
+      .filter(
+        (entry) =>
+          entry.title &&
+          (Number.isFinite(entry.productionStart) ||
+            Number.isFinite(entry.productionEnd) ||
+            Number.isFinite(entry.settingStart) ||
+            Number.isFinite(entry.settingEnd))
+      );
 
     if (imported.length === 0) {
       setImportState({ phase: "error", message: "No valid items in this file." });
       return;
     }
+
+    // Ensure newly imported items are visible instead of hidden by prior filters/lane selection.
+    setQuery("");
+    setSoloType(null);
+    if (mode === MODE_SETTING) setMode(MODE_PRODUCTION);
 
     setImportState({ phase: "deploying", message: `Deploying ${imported.length} nodes...` });
 
@@ -3938,7 +4026,28 @@ function App() {
             onPointerUp={onOverviewRectUp}
             onPointerCancel={onOverviewRectUp}
             aria-label="Visible range"
-          />
+          >
+            <div
+              className="overview-handle-edge left"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => onOverviewEdgeDown("left", event)}
+              onPointerMove={onOverviewEdgeMove}
+              onPointerUp={onOverviewEdgeUp}
+              onPointerCancel={onOverviewEdgeUp}
+              aria-label="Resize visible range start"
+              role="button"
+            />
+            <div
+              className="overview-handle-edge right"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => onOverviewEdgeDown("right", event)}
+              onPointerMove={onOverviewEdgeMove}
+              onPointerUp={onOverviewEdgeUp}
+              onPointerCancel={onOverviewEdgeUp}
+              aria-label="Resize visible range end"
+              role="button"
+            />
+          </div>
         </div>
       </section>
 
@@ -3967,7 +4076,7 @@ function App() {
       ) : null}
 
       <div className="status-bar">
-        <span>{filteredEntries.length} items · {baseRenderedUnits} nodes</span>
+        <span>{filteredEntries.length} items · {visibleEntryCount} visible · {baseRenderedUnits} nodes</span>
         {(inferenceUi.queued > 0 || inferenceUi.running > 0) ? (
           <span>Inferring: {inferenceUi.running} active, {inferenceUi.queued} queued</span>
         ) : null}
