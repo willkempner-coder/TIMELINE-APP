@@ -1,0 +1,24 @@
+{
+  "name": "media-timeline-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "desktop": "npm run build && electron ./electron/main.cjs"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "papaparse": "^5.5.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "electron": "^33.2.1",
+    "vite": "^5.4.10"
+  }
+}
