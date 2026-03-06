@@ -1915,12 +1915,22 @@ function App() {
   }, [entries, hoveredBranchLabel, hoveredClusterId, hoveredEntryId, hoveredTimelineLabel, visibleRenderItems]);
 
   const hoveredSubline = useMemo(() => {
+    if (hoveredEntryId) {
+      const entry = entries.find((item) => item.id === hoveredEntryId);
+      if (entry) {
+        const typeLabel = getType(entry.mediaType).label;
+        const year = entry.settingStart ?? entry.settingEnd ?? entry.productionStart ?? entry.productionEnd;
+        const yearPart = Number.isFinite(year) ? ` · ${Math.round(year)}` : "";
+        const creatorPart = entry.creator ? ` · ${entry.creator}` : "";
+        return `${typeLabel}${creatorPart}${yearPart}`;
+      }
+    }
     if (hoveredClusterId) {
       const cluster = visibleRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
       if (cluster) return formatClusterTypeBreakdown(cluster);
     }
     return "";
-  }, [hoveredClusterId, visibleRenderItems]);
+  }, [entries, hoveredClusterId, hoveredEntryId, visibleRenderItems]);
 
   const baseRenderedUnits = useMemo(() => countRenderUnits(visibleRenderItems, timelineState.span), [timelineState.span, visibleRenderItems]);
 
