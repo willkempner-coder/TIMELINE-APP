@@ -4136,7 +4136,6 @@ function App() {
                   type="button"
                   className={`import-logo-btn ${source === "goodreads" ? "active" : ""}`}
                   onClick={() => triggerImportPicker("goodreads")}
-                  title="Goodreads (.csv)"
                   aria-label="Goodreads (.csv)"
                   data-tip="Goodreads (.csv)"
                 >
@@ -4146,7 +4145,6 @@ function App() {
                   type="button"
                   className={`import-logo-btn ${source === "letterboxd" ? "active" : ""}`}
                   onClick={() => triggerImportPicker("letterboxd")}
-                  title="Letterboxd (.zip)"
                   aria-label="Letterboxd (.zip)"
                   data-tip="Letterboxd (.zip)"
                 >

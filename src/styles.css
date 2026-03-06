@@ -989,7 +989,7 @@ html, body, #root {
   cursor: pointer;
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 .import-logo-btn:hover {
   border-color: var(--stroke-strong);
