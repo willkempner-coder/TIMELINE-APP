@@ -3431,41 +3431,80 @@ function App() {
 
       <div className="corner-buttons bottom-left">
         <aside className="map-key-panel" aria-label="Map key">
-          <div className="map-key-media-list">
-            {(showAllMapTypes
-              ? MEDIA_TYPES
-              : MEDIA_TYPES.filter((type) => type.id === "book" || type.id === "movie" || type.id === "podcast")
-            ).map((type) => (
+          <div className="map-key-grid">
+            {MEDIA_TYPES.filter((type) => type.id === "book" || type.id === "movie" || type.id === "podcast").map((type) => (
               <button
                 key={type.id}
                 type="button"
-                className={`map-key-media-item ${soloType === type.id ? "active" : ""}`}
+                className={`map-key-icon-btn ${soloType === type.id ? "active" : ""}`}
                 onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
                 title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
               >
-                <span className="map-key-dot" style={{ background: colorForMediaType(type.id) }} />
-                <span>{type.id === "movie" ? "Film" : type.label}</span>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d={MEDIA_ICON_PATHS[type.id]} />
+                </svg>
               </button>
             ))}
             <button
               type="button"
-              className="map-key-more-btn"
+              className={`map-key-icon-btn ${showAllMapTypes ? "active" : ""}`}
               onClick={() => setShowAllMapTypes((current) => !current)}
               title={showAllMapTypes ? "Show fewer media types" : "Show all media types"}
             >
-              {showAllMapTypes ? "▴ fewer" : "▾ more"}
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="4" y1="7" x2="20" y2="7" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="17" x2="20" y2="17" />
+              </svg>
+            </button>
+
+            <button type="button" className="map-key-icon-btn" onClick={() => toggleMainMenu("settings")} title="Timeline options">
+              <svg viewBox="0 0 32 32" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
+                <circle cx="13" cy="9" r="2.8" />
+                <circle cx="17" cy="16" r="2.8" />
+                <circle cx="13" cy="23" r="2.8" />
+              </svg>
+            </button>
+            <button type="button" className={`map-key-icon-btn ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)} title="Era zones">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7h18M3 12h18M3 17h18" />
+                <path d="M7 4v16M17 4v16" />
+              </svg>
+            </button>
+            <button type="button" className="map-key-icon-btn" onClick={() => setDarkMode((v) => !v)} title={darkMode ? "Light mode" : "Dark mode"}>
+              {darkMode ? (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              )}
             </button>
           </div>
-          <div className="map-key-divider" />
-          <button type="button" className={`map-key-control ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)}>
-            Eras: {showEras ? "On" : "Off"}
-          </button>
-          <button type="button" className="map-key-control" onClick={() => toggleMainMenu("settings")}>
-            Timeline options
-          </button>
-          <button type="button" className="map-key-control" onClick={() => setDarkMode((v) => !v)}>
-            {darkMode ? "Light mode" : "Dark mode"}
-          </button>
+          {showAllMapTypes ? (
+            <div className="map-key-more-popover">
+              {MEDIA_TYPES.filter((type) => !["book", "movie", "podcast"].includes(type.id)).map((type) => (
+                <button
+                  key={`extra-${type.id}`}
+                  type="button"
+                  className={`map-key-icon-btn ${soloType === type.id ? "active" : ""}`}
+                  onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
+                  title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={MEDIA_ICON_PATHS[type.id]} />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </aside>
       </div>
 
