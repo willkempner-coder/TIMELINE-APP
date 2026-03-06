@@ -591,10 +591,10 @@ html, body, #root {
 }
 .hover-subline {
   font-family: var(--font-ui);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  font-weight: 400;
-  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.035em;
+  font-weight: 500;
+  color: var(--text-secondary);
   text-transform: none;
 }
 

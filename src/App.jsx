@@ -5752,8 +5752,6 @@ function App() {
             const entry = entryById.get(marker.entryId);
             if (!entry) return null;
 
-            const type = getType(marker.mediaType);
-            const isDetailed = timelineState.span <= 72;
             const burst = burstMap[entry.id];
 
             const classes = ["node"];
@@ -5806,13 +5804,7 @@ function App() {
                     )
                   }
                   title={entry.title}
-                >
-                  {MEDIA_ICON_PATHS[marker.mediaType] ? (
-                    <svg viewBox="0 0 24 24" width={isDetailed ? 13 : 10} height={isDetailed ? 13 : 10} fill="none" stroke={isWantStatus ? nodeColor : "currentColor"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d={MEDIA_ICON_PATHS[marker.mediaType]} />
-                    </svg>
-                  ) : type.icon}
-                </button>
+                />
 
                 {marker.rangeEnd > marker.rangeStart ? (
                   <button
