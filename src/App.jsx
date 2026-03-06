@@ -1166,6 +1166,7 @@ function App() {
 
   const [soloType, setSoloType] = useState(null); // null = show all, string = solo that type
   const [tocTypeFilter, setTocTypeFilter] = useState(null); // null = show all types in TOC
+  const [tocPendingDeleteId, setTocPendingDeleteId] = useState(null);
   const [preZoomState, setPreZoomState] = useState(null); // saved zoom state before node click
   const preZoomStateRef = useRef(null);
 
@@ -3629,7 +3630,7 @@ function App() {
                   type="button"
                   className={`toc-type-icon-btn ${tocTypeFilter === type.id ? "active" : ""}`}
                   onClick={() => setTocTypeFilter(t => t === type.id ? null : type.id)}
-                  title={type.label}
+                  data-tip={type.label}
                 >
                   {MEDIA_ICON_PATHS[type.id] ? (
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3697,10 +3698,20 @@ function App() {
                   <div key={group.label} className="toc-decade-group">
                     <div className="toc-decade-label">{group.label}</div>
                     {group.entries.map(entry => (
-                      <button key={entry.id} type="button" className="toc-item" onClick={() => onTocItemClick(entry)}>
-                        <span className="toc-title">{entry.title}</span>
-                        <small>{getType(entry.mediaType).label}{entry.settingStart ? ` · ${entry.settingStart}` : (entry.settingEnd ? ` · ${entry.settingEnd}` : "")}</small>
-                      </button>
+                      <div key={entry.id} className="toc-item-wrap">
+                        <button type="button" className="toc-item" onClick={() => onTocItemClick(entry)}>
+                          <span className="toc-title">{entry.title}</span>
+                          <small>{getType(entry.mediaType).label}{entry.settingStart ? ` · ${entry.settingStart}` : (entry.settingEnd ? ` · ${entry.settingEnd}` : "")}</small>
+                        </button>
+                        {tocPendingDeleteId === entry.id ? (
+                          <div className="toc-item-confirm">
+                            <button type="button" className="toc-delete-yes" onClick={() => { deleteEntry(entry.id); setTocPendingDeleteId(null); }}>Delete</button>
+                            <button type="button" className="toc-delete-no" onClick={() => setTocPendingDeleteId(null)}>Cancel</button>
+                          </div>
+                        ) : (
+                          <button type="button" className="toc-item-delete" onClick={(e) => { e.stopPropagation(); setTocPendingDeleteId(entry.id); }} aria-label={`Delete ${entry.title}`}>×</button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 ));
@@ -4446,22 +4457,31 @@ function App() {
 
           {(() => {
             const presentX = toX(presentYear, viewStart, timelineState.span, canvasRect.width);
-            const futureZoneVisible = presentX < canvasRect.width;
+            const futureZoneVisible = presentX < canvasRect.width + 60;
+            const futureZoneWidth = Math.max(0, canvasRect.width - Math.max(0, presentX));
+            // Position the "The Future" label: pin to visible area
+            const futureLabelX = Math.max(presentX + 18, Math.min(canvasRect.width - 80, presentX + 18));
+            const laneYValues = Object.values(lanes);
+            const midY = laneYValues.length > 0 ? (Math.min(...laneYValues) + Math.max(...laneYValues)) / 2 : canvasRect.height / 2;
             return (
               <>
-                {futureZoneVisible && presentX > 0 ? (
+                {futureZoneVisible && futureZoneWidth > 0 ? (
                   <rect
-                    x={presentX} y={0}
-                    width={Math.max(0, canvasRect.width - presentX)}
+                    x={Math.max(0, presentX)} y={0}
+                    width={futureZoneWidth}
                     height={canvasRect.height}
-                    fill="rgba(255,255,255,0.025)"
+                    fill="var(--future-zone-fill)"
                     pointerEvents="none"
                   />
                 ) : null}
-                {presentX > 0 && presentX < canvasRect.width ? (
+                {futureZoneVisible ? (
                   <>
-                    <line x1={presentX} y1={0} x2={presentX} y2={canvasRect.height} className="present-guard" />
-                    <text x={presentX + 5} y={18} className="present-label">Now</text>
+                    <line x1={presentX} y1={0} x2={presentX} y2={canvasRect.height} className="future-guard" />
+                    {futureZoneWidth > 60 ? (
+                      <text x={futureLabelX} y={midY} className="future-label" dominantBaseline="middle">
+                        The Future
+                      </text>
+                    ) : null}
                   </>
                 ) : null}
               </>
@@ -4620,6 +4640,33 @@ function App() {
 
                 return (
                   <>
+                    {/* Connector lines from cluster → branch nodes */}
+                    <svg
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible", zIndex: 0 }}
+                      aria-hidden="true"
+                    >
+                      {/* cluster → multi-item type groups */}
+                      {!isSingleType && multiItemGroups.map((group, index) => {
+                        const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
+                        return <line key={`cl-g-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
+                      })}
+                      {/* cluster → single-item direct nodes */}
+                      {!isSingleType && allSingleItems.map((item, index) => {
+                        const x = spreadX(baseX, index, allSingleItems.length, groupSpacing);
+                        return <line key={`cl-s-${item.entry.id}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
+                      })}
+                      {/* active type group → individual entries */}
+                      {!isSingleType && activeEntries.map((item, index) => {
+                        const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
+                        return <line key={`cl-e-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={x} y2={detailY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
+                      })}
+                      {/* cluster → direct entries (single-type case) */}
+                      {isSingleType && directEntries.map((item, index) => {
+                        const x = spreadX(baseX, index, directEntries.length, itemSpacing);
+                        return <line key={`cl-d-${item.entry.id}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
+                      })}
+                    </svg>
+
                     {multiItemGroups.map((group, index) => {
                       if (isSingleType) return null;
                       const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
