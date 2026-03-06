@@ -970,6 +970,51 @@ html, body, #root {
 
 .import-box { display: grid; gap: 7px; }
 .import-status { margin: 0; color: var(--text-secondary); font-size: 0.75rem; }
+.import-source-logos {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.import-logo-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke-med);
+  background: var(--surface-raised);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  position: relative;
+  overflow: hidden;
+}
+.import-logo-btn:hover {
+  border-color: var(--stroke-strong);
+  box-shadow: var(--shadow-sm);
+}
+.import-logo-btn.active {
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+.goodreads-logo-mark {
+  font-family: "EB Garamond", Georgia, serif;
+  font-size: 1.7rem;
+  line-height: 1;
+  color: #8a4f10;
+}
+.import-logo-btn .lb-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.import-logo-btn .lb-dot-1 { left: 10px; background: #ff8500; }
+.import-logo-btn .lb-dot-2 { left: 17px; background: #00e054; }
+.import-logo-btn .lb-dot-3 { left: 24px; background: #40bcff; }
 .import-preview-sheet {
   position: absolute;
   left: 50%;
@@ -1045,6 +1090,41 @@ html, body, #root {
   text-transform: none;
   letter-spacing: 0;
 }
+.import-genre-accordion {
+  border-bottom: 1px solid var(--stroke);
+}
+.import-genre-header {
+  width: 100%;
+  border: none;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+.import-genre-header small {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+.import-genre-caret {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.import-genre-body {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+.import-genre-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--stroke);
+}
 .import-preview-include {
   display: flex;
   align-items: start;
@@ -1111,7 +1191,7 @@ html, body, #root {
 }
 .import-preview-setting-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 .import-preview-setting-grid label {
@@ -2004,9 +2084,24 @@ html, body, #root {
   left: 50%; top: 50%;
   transform: translate(-50%, -50%) translateY(60px);
   text-align: center;
-  pointer-events: none;
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
   color: var(--muted);
   animation: hint-pulse 3s ease-in-out infinite;
+  transition: color 180ms ease, transform 180ms ease;
+}
+.onboarding-hint:hover {
+  color: var(--text);
+  transform: translate(-50%, -50%) translateY(56px);
+}
+.onboarding-hint:focus-visible {
+  outline: 1px solid var(--stroke-strong);
+  outline-offset: 8px;
+  border-radius: 8px;
 }
 .onboarding-hint p { margin: 0 0 6px; font-size: 1rem; font-family: "EB Garamond", Georgia, serif; }
 .onboarding-hint span { font-size: 0.8rem; }

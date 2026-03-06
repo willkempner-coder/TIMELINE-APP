@@ -340,6 +340,26 @@ function parseYearRangeText(value) {
   };
 }
 
+function parseYearOrRangeInput(value) {
+  const range = parseYearRangeText(value);
+  if (range) return range;
+  const single = parseManualYearInput(value);
+  if (!Number.isFinite(single)) return null;
+  return { start: single, end: single };
+}
+
+function formatYearOrRangeInput(start, end) {
+  const s = toYear(start);
+  const e = toYear(end);
+  if (Number.isFinite(s) && Number.isFinite(e)) {
+    if (s === e) return String(s);
+    return `${Math.min(s, e)}-${Math.max(s, e)}`;
+  }
+  if (Number.isFinite(s)) return String(s);
+  if (Number.isFinite(e)) return String(e);
+  return "";
+}
+
 function fromGoodreadsCsv(csvText) {
   const rows = parseRows(csvText);
 
@@ -1158,8 +1178,6 @@ function App() {
 
   const [showMonthResolution, setShowMonthResolution] = useState(false);
   const [showEras, setShowEras] = useState(false);
-  const [addShowProdEnd, setAddShowProdEnd] = useState(false);
-  const [addShowSetEnd, setAddShowSetEnd] = useState(false);
   const [showAllMapTypes, setShowAllMapTypes] = useState(false);
   const [tocTagFilter, setTocTagFilter] = useState(null);
   const [hoveredEraId, setHoveredEraId] = useState(null);
@@ -1177,6 +1195,7 @@ function App() {
   const [flight, setFlight] = useState(null);
   const [importState, setImportState] = useState({ phase: "idle", message: "" });
   const [importPreview, setImportPreview] = useState(null);
+  const [expandedImportGenres, setExpandedImportGenres] = useState([]);
 
   const [inferenceUi, setInferenceUi] = useState({
     queued: 0,
@@ -1295,6 +1314,7 @@ function App() {
   const centerMoveRafRef = useRef(null);
   const pendingZoomSpanRef = useRef(timelineState.span);
   const pendingViewStartRef = useRef(timelineState.end - timelineState.span);
+  const lastPointerRef = useRef({ x: null, y: null, inside: false });
   const selectedEntryIdRef = useRef(null);
   const popupClosingRef = useRef(false);
   const [popupSize, setPopupSize] = useState({ width: 420, height: 320 });
@@ -1651,6 +1671,43 @@ function App() {
   const importPreviewSelectedCount = useMemo(() => {
     if (!importPreview) return 0;
     return importPreview.items.reduce((count, item) => count + (item.include ? 1 : 0), 0);
+  }, [importPreview]);
+
+  const letterboxdGenreGroups = useMemo(() => {
+    if (!importPreview || importPreview.source !== "letterboxd") return [];
+    const priority = ["Documentary", "History"];
+    const grouped = new Map();
+
+    const primaryGenreForItem = (item) => {
+      const genres = Array.isArray(item.genres) ? item.genres.filter(Boolean) : [];
+      for (const name of priority) {
+        if (genres.includes(name)) return name;
+      }
+      return genres[0] || "Uncategorized";
+    };
+
+    for (const item of importPreview.items) {
+      const genre = primaryGenreForItem(item);
+      if (!grouped.has(genre)) grouped.set(genre, []);
+      grouped.get(genre).push(item);
+    }
+
+    const groups = Array.from(grouped.entries()).map(([genre, items]) => ({
+      genre,
+      items,
+      selected: items.reduce((acc, item) => acc + (item.include ? 1 : 0), 0)
+    }));
+
+    groups.sort((a, b) => {
+      const ai = priority.indexOf(a.genre);
+      const bi = priority.indexOf(b.genre);
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      if (a.genre === "Uncategorized") return 1;
+      if (b.genre === "Uncategorized") return -1;
+      return a.genre.localeCompare(b.genre);
+    });
+
+    return groups;
   }, [importPreview]);
 
   useEffect(() => {
@@ -2391,6 +2448,48 @@ function App() {
     setTimelineState(defaultState(presentYear));
   }
 
+  function refreshTimelineHoverAt(clientX, clientY, start = viewStart, span = timelineState.span, options = {}) {
+    if (!canvasRef.current || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const relativeX = clientX - rect.left;
+    const relativeY = clientY - rect.top;
+    const isInside = relativeX >= 0 && relativeX <= rect.width && relativeY >= 0 && relativeY <= rect.height;
+    const remember = options.remember !== false;
+
+    if (remember) {
+      lastPointerRef.current = { x: clientX, y: clientY, inside: isInside };
+    }
+
+    if (!isInside) {
+      if (options.clearWhenOutside !== false) {
+        setHoveredEraId(null);
+        setHoveredTimelineLabel("");
+      }
+      return;
+    }
+
+    const width = Math.max(1, canvasRect.width || rect.width);
+    const laneYValues = Object.values(lanes);
+    const topLaneY = laneYValues.length > 0 ? Math.min(...laneYValues) : canvasRect.height / 2;
+    const isAboveTimeline = relativeY < topLaneY - 8;
+    const yearAtX = start + (relativeX / width) * span;
+
+    if (showEras) {
+      const hoveredEra = HISTORICAL_ERAS.find((era) => yearAtX >= era.start && yearAtX <= era.end) || null;
+      setHoveredEraId(hoveredEra?.id || null);
+      setHoveredTimelineLabel("");
+    } else {
+      setHoveredEraId(null);
+      setHoveredTimelineLabel(isAboveTimeline ? getOrdinalCentury(yearAtX) : "");
+    }
+  }
+
+  useEffect(() => {
+    const pointer = lastPointerRef.current;
+    if (!pointer.inside) return;
+    refreshTimelineHoverAt(pointer.x, pointer.y, viewStart, timelineState.span, { remember: false });
+  }, [viewStart, timelineState.span, canvasRect.width, canvasRect.height, lanes, showEras]);
+
   function onWheelNavigate(event) {
     event.preventDefault();
 
@@ -2400,12 +2499,14 @@ function App() {
     if (event.metaKey || event.ctrlKey) {
       const factor = event.deltaY < 0 ? 1.048 : 0.952;
       updateSpan(pendingZoomSpanRef.current * factor, event.clientX);
+      refreshTimelineHoverAt(event.clientX, event.clientY, pendingViewStartRef.current, pendingZoomSpanRef.current);
       return;
     }
 
     if (absY > absX && absY > 0) {
       const factor = event.deltaY < 0 ? 1.048 : 0.952;
       updateSpan(pendingZoomSpanRef.current * factor, event.clientX);
+      refreshTimelineHoverAt(event.clientX, event.clientY, pendingViewStartRef.current, pendingZoomSpanRef.current);
       return;
     }
 
@@ -2415,6 +2516,7 @@ function App() {
       const nextStart = pendingViewStartRef.current + deltaYears;
       pendingViewStartRef.current = nextStart;
       scheduleTimelineWindow(nextStart, pendingZoomSpanRef.current);
+      refreshTimelineHoverAt(event.clientX, event.clientY, pendingViewStartRef.current, pendingZoomSpanRef.current);
     }
   }
 
@@ -3206,15 +3308,16 @@ function App() {
       items: imported.map((entry) => ({
         ...entry,
         include: true,
-        settingStartInput: Number.isFinite(entry.settingStart) ? String(entry.settingStart) : "",
-        settingEndInput: Number.isFinite(entry.settingEnd) ? String(entry.settingEnd) : ""
+        settingRangeInput: formatYearOrRangeInput(entry.settingStart, entry.settingEnd)
       }))
     });
+    setExpandedImportGenres([]);
     setImportState({ phase: "idle", message: "" });
   }
 
   function closeImportPreview() {
     setImportPreview(null);
+    setExpandedImportGenres([]);
   }
 
   function removeImportPreviewItem(tempId) {
@@ -3247,6 +3350,24 @@ function App() {
     });
   }
 
+  function setImportPreviewIncludeGenre(genre, include) {
+    setImportPreview((current) => {
+      if (!current || current.source !== "letterboxd") return current;
+      const priority = ["Documentary", "History"];
+      const primaryGenreForItem = (item) => {
+        const genres = Array.isArray(item.genres) ? item.genres.filter(Boolean) : [];
+        for (const name of priority) {
+          if (genres.includes(name)) return name;
+        }
+        return genres[0] || "Uncategorized";
+      };
+      return {
+        ...current,
+        items: current.items.map((item) => (primaryGenreForItem(item) === genre ? { ...item, include } : item))
+      };
+    });
+  }
+
   function updateImportPreviewItem(tempId, patch) {
     setImportPreview((current) => {
       if (!current) return current;
@@ -3269,11 +3390,10 @@ function App() {
 
     const prepared = selectedItems
       .map((item) => {
-        const manualSettingStart = toYear(item.settingStartInput);
-        const manualSettingEnd = toYear(item.settingEndInput);
-        const hasManualSetting = Number.isFinite(manualSettingStart) || Number.isFinite(manualSettingEnd);
-        const nextSettingStart = hasManualSetting ? (Number.isFinite(manualSettingStart) ? manualSettingStart : manualSettingEnd) : item.settingStart;
-        const nextSettingEnd = hasManualSetting ? (Number.isFinite(manualSettingEnd) ? manualSettingEnd : manualSettingStart) : item.settingEnd;
+        const parsedSettingRange = parseYearOrRangeInput(item.settingRangeInput);
+        const hasManualSetting = Boolean(parsedSettingRange);
+        const nextSettingStart = hasManualSetting ? parsedSettingRange.start : item.settingStart;
+        const nextSettingEnd = hasManualSetting ? parsedSettingRange.end : item.settingEnd;
 
         return {
           ...item,
@@ -3330,6 +3450,15 @@ function App() {
 
   function closeAddPanel() {
     setShowAdd(false);
+  }
+
+  function openAddPanel() {
+    setShowAdd(true);
+    setShowToc(false);
+    setShowSettings(false);
+    setShowRangePanel(false);
+    setShowRangeInlineInput(false);
+    setRangeError("");
   }
 
   function closeSettingsPanel() {
@@ -3504,24 +3633,6 @@ function App() {
       </div>
 
       <div className="corner-buttons top-right">
-        <button
-          className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
-          type="button"
-          onClick={() => setViewMode(v => v === "timeline" ? "scatter" : "timeline")}
-          title={viewMode === "timeline" ? "Scatter view" : "Timeline view"}
-        >
-          {viewMode === "timeline" ? (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="7" r="1.5"/><circle cx="19" cy="15" r="1.5"/>
-              <line x1="6.5" y1="11" x2="10.5" y2="8"/><line x1="13.5" y1="8" x2="17.5" y2="14"/>
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="4" y1="20" x2="20" y2="20"/><line x1="4" y1="4" x2="4" y2="20"/>
-              <polyline points="4,12 9,7 14,10 20,5"/>
-            </svg>
-          )}
-        </button>
         <button className="glass-btn toc-icon" type="button" onClick={() => toggleMainMenu("toc")} title="Table of contents">
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path d="M8 9h16M8 16h16M8 23h16" />
@@ -3900,10 +4011,18 @@ function App() {
               <label className="released-label-wrap">
                 Released
                 <input
-                  value={addDraft.productionStart}
-                  onChange={(event) => setAddField("productionStart", event.target.value)}
-                  inputMode="numeric"
-                  placeholder="2019"
+                  value={formatYearOrRangeInput(addDraft.productionStart, addDraft.productionEnd)}
+                  onChange={(event) => {
+                    const parsed = parseYearOrRangeInput(event.target.value);
+                    if (!parsed) {
+                      setAddField("productionStart", event.target.value);
+                      setAddField("productionEnd", event.target.value);
+                      return;
+                    }
+                    setAddField("productionStart", String(parsed.start));
+                    setAddField("productionEnd", String(parsed.end));
+                  }}
+                  placeholder="e.g. 1968 or 1968-1983"
                 />
               </label>
             </div>
@@ -3934,26 +4053,20 @@ function App() {
                 <label>
                   Years Covered
                   <input
-                    value={addDraft.settingStart}
-                    onChange={(event) => setAddField("settingStart", event.target.value)}
-                    inputMode="numeric"
-                    placeholder="e.g. 1940"
+                    value={formatYearOrRangeInput(addDraft.settingStart, addDraft.settingEnd)}
+                    onChange={(event) => {
+                      const parsed = parseYearOrRangeInput(event.target.value);
+                      if (!parsed) {
+                        setAddField("settingStart", event.target.value);
+                        setAddField("settingEnd", event.target.value);
+                        return;
+                      }
+                      setAddField("settingStart", String(parsed.start));
+                      setAddField("settingEnd", String(parsed.end));
+                    }}
+                    placeholder="e.g. 1968 or 1968-1983"
                   />
                 </label>
-                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle end year">
-                  {addShowSetEnd ? "−" : "→"}
-                </button>
-                {addShowSetEnd ? (
-                  <label>
-                    End year
-                    <input
-                      value={addDraft.settingEnd}
-                      onChange={(event) => setAddField("settingEnd", event.target.value)}
-                      inputMode="numeric"
-                      placeholder="1945"
-                    />
-                  </label>
-                ) : null}
               </div>
             </div>
             <label>
@@ -3982,13 +4095,28 @@ function App() {
 
             <div className="import-divider"><span>or import</span></div>
             <div className="import-box">
-              <label>
-                Source
-                <select value={source} onChange={(event) => setSource(event.target.value)}>
-                  <option value="goodreads">Goodreads (CSV)</option>
-                  <option value="letterboxd">Letterboxd (ZIP)</option>
-                </select>
-              </label>
+              <div className="import-source-logos" role="group" aria-label="Import source">
+                <button
+                  type="button"
+                  className={`import-logo-btn ${source === "goodreads" ? "active" : ""}`}
+                  onClick={() => setSource("goodreads")}
+                  title="Goodreads (.csv)"
+                  aria-label="Goodreads (.csv)"
+                >
+                  <span className="goodreads-logo-mark">g</span>
+                </button>
+                <button
+                  type="button"
+                  className={`import-logo-btn ${source === "letterboxd" ? "active" : ""}`}
+                  onClick={() => setSource("letterboxd")}
+                  title="Letterboxd (.zip)"
+                  aria-label="Letterboxd (.zip)"
+                >
+                  <span className="lb-dot lb-dot-1" />
+                  <span className="lb-dot lb-dot-2" />
+                  <span className="lb-dot lb-dot-3" />
+                </button>
+              </div>
               <label>
                 File
                 <input
@@ -4066,21 +4194,11 @@ function App() {
                         ) : null}
                         <div className="import-preview-setting-grid">
                           <label>
-                            Setting start
+                            Years Covered
                             <input
-                              value={item.settingStartInput}
-                              onChange={(event) => updateImportPreviewItem(item.tempId, { settingStartInput: event.target.value })}
-                              placeholder="year"
-                              inputMode="numeric"
-                            />
-                          </label>
-                          <label>
-                            End
-                            <input
-                              value={item.settingEndInput}
-                              onChange={(event) => updateImportPreviewItem(item.tempId, { settingEndInput: event.target.value })}
-                              placeholder="year"
-                              inputMode="numeric"
+                              value={item.settingRangeInput ?? ""}
+                              onChange={(event) => updateImportPreviewItem(item.tempId, { settingRangeInput: event.target.value })}
+                              placeholder="e.g. 1968 or 1968-1983"
                             />
                           </label>
                         </div>
@@ -4090,7 +4208,41 @@ function App() {
                 }
 
                 if (!isGoodreads) {
-                  return readItems.map(renderPreviewItem);
+                  return (
+                    <>
+                      {letterboxdGenreGroups.map((group) => {
+                        const isOpen = expandedImportGenres.includes(group.genre);
+                        return (
+                          <div key={`genre-${group.genre}`} className="import-genre-accordion">
+                            <button
+                              type="button"
+                              className="import-genre-header"
+                              onClick={() =>
+                                setExpandedImportGenres((current) =>
+                                  current.includes(group.genre)
+                                    ? current.filter((name) => name !== group.genre)
+                                    : [...current, group.genre]
+                                )
+                              }
+                            >
+                              <span>{group.genre}</span>
+                              <small>{group.selected}/{group.items.length}</small>
+                              <span className="import-genre-caret">{isOpen ? "▾" : "▸"}</span>
+                            </button>
+                            {isOpen ? (
+                              <div className="import-genre-body">
+                                <div className="import-genre-actions">
+                                  <button type="button" className="import-section-btn" onClick={() => setImportPreviewIncludeGenre(group.genre, true)}>Select all</button>
+                                  <button type="button" className="import-section-btn" onClick={() => setImportPreviewIncludeGenre(group.genre, false)}>Deselect all</button>
+                                </div>
+                                {group.items.map(renderPreviewItem)}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
                 }
 
                 return (
@@ -4469,28 +4621,12 @@ function App() {
         onPointerDown={onDragStart}
         onPointerMove={(event) => {
           onDragMove(event);
-          if (canvasRef.current && !lockedRange) {
-            const rect = canvasRef.current.getBoundingClientRect();
-            const clientX = event.clientX - rect.left;
-            const clientY = event.clientY - rect.top;
-            const yearAtX = viewStart + (clientX / canvasRect.width) * timelineState.span;
-            const laneYValues = Object.values(lanes);
-            const topLaneY = laneYValues.length > 0 ? Math.min(...laneYValues) : canvasRect.height / 2;
-            const isAboveTimeline = clientY < topLaneY - 8;
-
-            if (showEras) {
-              const hoveredEra = HISTORICAL_ERAS.find((era) => yearAtX >= era.start && yearAtX <= era.end) || null;
-              setHoveredEraId(hoveredEra?.id || null);
-              setHoveredTimelineLabel("");
-            } else {
-              setHoveredEraId(null);
-              setHoveredTimelineLabel(isAboveTimeline ? getOrdinalCentury(yearAtX) : "");
-            }
-          }
+          refreshTimelineHoverAt(event.clientX, event.clientY);
         }}
         onPointerUp={onDragEnd}
         onPointerCancel={onDragEnd}
         onPointerLeave={() => {
+          lastPointerRef.current = { x: null, y: null, inside: false };
           setHoveredEraId(null);
           setHoveredTimelineLabel("");
         }}
@@ -4559,6 +4695,7 @@ function App() {
           })()}
 
           {ticks.values.map((value) => {
+            if (value > presentYear) return null;
             const x = toX(value, viewStart, timelineState.span, canvasRect.width);
             if (x < -60 || x > canvasRect.width + 60) return null;
 
@@ -4574,9 +4711,12 @@ function App() {
             );
           })}
 
-          {Object.entries(lanes).map(([lane, y]) => (
-            <line key={lane} x1="0" y1={y} x2={canvasRect.width} y2={y} className="timeline-line" />
-          ))}
+          {Object.entries(lanes).map(([lane, y]) => {
+            const presentX = toX(presentYear, viewStart, timelineState.span, canvasRect.width);
+            const laneEndX = clamp(presentX, 0, canvasRect.width);
+            if (laneEndX <= 0) return null;
+            return <line key={lane} x1="0" y1={y} x2={laneEndX} y2={y} className="timeline-line" />;
+          })}
 
           {selectedDualLink ? (
             <line
@@ -4642,15 +4782,10 @@ function App() {
                     pointerEvents="none"
                   />
                 ) : null}
-                {futureZoneVisible ? (
-                  <>
-                    <line x1={presentX} y1={0} x2={presentX} y2={canvasRect.height} className="future-guard" />
-                    {futureZoneWidth > 60 ? (
-                      <text x={futureLabelX} y={midY} className="future-label" dominantBaseline="middle">
-                        The Future
-                      </text>
-                    ) : null}
-                  </>
+                {futureZoneVisible && futureZoneWidth > 60 ? (
+                  <text x={futureLabelX} y={midY} className="future-label" dominantBaseline="middle">
+                    The Future
+                  </text>
                 ) : null}
               </>
             );
@@ -4696,10 +4831,10 @@ function App() {
 
         <div className="nodes-layer">
           {entries.length === 0 ? (
-            <div className="onboarding-hint">
+            <button className="onboarding-hint" type="button" onClick={openAddPanel}>
               <p>Log your first piece of media to begin mapping history.</p>
               <span>Press <strong>+</strong> to add something.</span>
-            </div>
+            </button>
           ) : null}
           {visibleRenderItems.map((item) => {
             if (item.type === "cluster") {
