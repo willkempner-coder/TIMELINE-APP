@@ -9,7 +9,7 @@ const USE_SEED_DATA = String(import.meta.env.VITE_USE_SEED_DATA ?? "true").toLow
 
 const MEDIA_TYPES = [
   { id: "book", label: "Book", icon: "BK" },
-  { id: "movie", label: "Movie", icon: "MV" },
+  { id: "movie", label: "Film", icon: "FM" },
   { id: "television", label: "TV", icon: "TV" },
   { id: "podcast", label: "Podcast", icon: "PC" },
   { id: "theater", label: "Theater", icon: "TH" },
@@ -650,42 +650,53 @@ function resolutionFromSpan(span) {
   return "detail";
 }
 
+function getOrdinalCentury(year) {
+  if (!Number.isFinite(year)) return null;
+  const absYear = Math.abs(year);
+  const century = Math.floor(absYear / 100) + 1;
+  const ordinals = ["1st","2nd","3rd","4th","5th","6th","7th","8th","9th","10th",
+    "11th","12th","13th","14th","15th","16th","17th","18th","19th","20th","21st","22nd","23rd"];
+  const suffix = ordinals[century - 1] || `${century}th`;
+  const era = year < 0 ? " BCE" : "";
+  return `${suffix} Century${era}`;
+}
+
+function getCenturyPeriod(year) {
+  // Returns "Early", "Mid", or "Late" for a given year within its century
+  const centuryStart = Math.floor(year / 100) * 100;
+  const offset = year - centuryStart;
+  if (offset < 34) return "Early";
+  if (offset < 67) return "Mid";
+  return "Late";
+}
+
 function formatClusterLabel(item) {
-  if (!item || !Number.isFinite(item.year)) return `${item?.size ?? ""} media`.trim();
-  const suffix = item.lane === MODE_SETTING ? "setting" : "media";
-  if (item.resolution === "century") {
-    const cStart = Math.floor(item.year / 100) * 100;
-    return `${cStart}s ${suffix}`;
-  }
-  if (item.resolution === "decade") {
-    const dStart = Math.floor(item.year / 10) * 10;
-    const years = Array.isArray(item.markers)
-      ? item.markers.map((marker) => marker.primaryYear).filter(Number.isFinite)
-      : [];
-    if (years.length > 0) {
-      const minY = Math.min(...years);
-      const maxY = Math.max(...years);
-      const minDecade = Math.floor(minY / 10) * 10;
-      const maxDecade = Math.floor(maxY / 10) * 10;
+  if (!item) return "";
+  const size = item.size ?? (item.markers?.length ?? 0);
+  const suffix = size > 0 ? ` (${size})` : "";
 
-      if (minDecade === dStart && maxDecade === dStart) {
-        const partOfDecade = (year) => {
-          const ones = ((Math.round(year) % 10) + 10) % 10;
-          if (ones <= 2) return "Early";
-          if (ones >= 7) return "Late";
-          return "Mid";
-        };
+  if (!Number.isFinite(item.year)) return `${size} items`;
 
-        const minPart = partOfDecade(minY);
-        const maxPart = partOfDecade(maxY);
-        if (minPart === maxPart && minPart !== "Mid") {
-          return `${minPart} ${dStart}s ${suffix}`;
-        }
-      }
-    }
-    return `${dStart}s ${suffix}`;
+  const resolution = item.resolution || resolutionFromSpan(item.span || 500);
+
+  if (resolution === "century") {
+    const centuryLabel = getOrdinalCentury(item.year);
+    return centuryLabel ? centuryLabel + suffix : `${size} items`;
   }
-  return `${Math.round(item.year)} ${suffix}`;
+
+  if (resolution === "decade") {
+    const markers = Array.isArray(item.markers) ? item.markers : [];
+    const years = markers.map(m => m.primaryYear).filter(Number.isFinite);
+    const minY = years.length > 0 ? Math.min(...years) : item.year;
+    const maxY = years.length > 0 ? Math.max(...years) : item.year;
+    const avgY = (minY + maxY) / 2;
+    const period = getCenturyPeriod(avgY);
+    const centuryLabel = getOrdinalCentury(avgY);
+    return centuryLabel ? `${period} ${centuryLabel}${suffix}` : `${Math.floor(item.year / 10) * 10}s${suffix}`;
+  }
+
+  // year resolution
+  return `${Math.round(item.year)}${suffix}`;
 }
 
 function getEntryLaneYear(entry, lane) {
@@ -1309,14 +1320,14 @@ function App() {
         case "=":
         case "+":
           event.preventDefault();
-          const newSpanZoomIn = Math.max(0.4, span * 0.7);
+          const newSpanZoomIn = Math.max(0.4, span * 0.85);
           updateSpan(newSpanZoomIn);
           break;
 
         case "ArrowDown":
         case "-":
           event.preventDefault();
-          const newSpanZoomOut = Math.min(maxSpan, span * 1.3);
+          const newSpanZoomOut = Math.min(maxSpan, span * 1.15);
           updateSpan(newSpanZoomOut);
           break;
 
@@ -2241,13 +2252,13 @@ function App() {
     const absY = Math.abs(event.deltaY);
 
     if (event.metaKey || event.ctrlKey) {
-      const factor = event.deltaY < 0 ? 1.08 : 0.92;
+      const factor = event.deltaY < 0 ? 1.048 : 0.952;
       updateSpan(pendingZoomSpanRef.current * factor, event.clientX);
       return;
     }
 
     if (absY > absX && absY > 0) {
-      const factor = event.deltaY < 0 ? 1.08 : 0.92;
+      const factor = event.deltaY < 0 ? 1.048 : 0.952;
       updateSpan(pendingZoomSpanRef.current * factor, event.clientX);
       return;
     }

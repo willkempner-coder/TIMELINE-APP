@@ -1280,25 +1280,35 @@ html, body, #root {
   top: -22px;
   transform: translateX(-50%);
   white-space: nowrap;
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--text-secondary);
   pointer-events: none;
   letter-spacing: 0.01em;
-  font-family: "EB Garamond", Georgia, serif;
-  font-style: italic;
+  font-family: "Inter", -apple-system, sans-serif;
+  font-style: normal;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
 }
 .node-stack[data-lane="SETTING"] .node-label {
-  top: 18px;
+  top: auto;
+  bottom: -22px;
 }
 .node.cluster {
-  width: 28px;
-  height: 28px;
-  background: var(--node-fill);
-  border: 1.5px solid var(--node-border);
-  color: var(--node-text);
-  font-size: 0.68rem;
+  width: 26px;
+  height: 26px;
+  background: var(--surface);
+  border: 1.5px solid var(--stroke-strong);
+  color: var(--text);
+  font-size: 0.64rem;
   font-weight: 600;
   box-shadow: var(--shadow-sm);
+  letter-spacing: -0.01em;
+}
+.node.cluster:hover {
+  background: var(--surface-raised);
+  border-color: var(--text);
+  transform: translate3d(-50%, -50%, 0) scale(1.12);
 }
 .node.branch-node { width: 14px; height: 14px; border-width: 1px; }
 .node.type-group-node {
