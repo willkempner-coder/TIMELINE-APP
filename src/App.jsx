@@ -4,6 +4,13 @@ import Papa from "papaparse";
 import INITIAL_DATA from "./initialData.json";
 
 const STORAGE_KEY = "timeline-media-log-v6";
+const LEGACY_STORAGE_KEYS = [
+  "timeline-media-log-v5",
+  "timeline-media-log-v4",
+  "timeline-media-log-v3",
+  "timeline-media-log-v2",
+  "timeline-media-log-v1"
+];
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "";
 const USE_SEED_DATA = String(import.meta.env.VITE_USE_SEED_DATA ?? "true").toLowerCase() !== "false";
 
@@ -1153,6 +1160,17 @@ function shouldInferSetting(entry) {
   return hasProduction || Boolean(entry.title);
 }
 
+function parseStoredEntries(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map(normalizeEntry).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 function App() {
   const presentYear = useMemo(() => nowYearFraction(), []);
   const [timelineState, setTimelineState] = useState(() => defaultState(presentYear));
@@ -1237,20 +1255,17 @@ function App() {
   const [tagInput, setTagInput] = useState("");
 
   const [entries, setEntries] = useState(() => {
-    // Clean up stale keys from old versions
-    ["v1","v2","v3","v4","v5"].forEach(v =>
-      localStorage.removeItem(`timeline-media-log-${v}`)
-    );
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return SAMPLE;
+    const currentEntries = parseStoredEntries(localStorage.getItem(STORAGE_KEY));
+    if (currentEntries) return currentEntries;
 
-    try {
-      const parsed = JSON.parse(saved);
-      const normalized = Array.isArray(parsed) ? parsed.map(normalizeEntry).filter(Boolean) : [];
-      return normalized.length > 0 ? normalized : SAMPLE;
-    } catch {
-      return SAMPLE;
+    for (const legacyKey of LEGACY_STORAGE_KEYS) {
+      const legacyEntries = parseStoredEntries(localStorage.getItem(legacyKey));
+      if (!legacyEntries) continue;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(legacyEntries));
+      return legacyEntries;
     }
+
+    return SAMPLE;
   });
 
   const entriesRef = useRef(entries);
@@ -1292,6 +1307,8 @@ function App() {
   const clusterGridRef = useRef(null);
   const rangeInlineWrapRef = useRef(null);
   const rangeInlineInputRef = useRef(null);
+  const goodreadsInputRef = useRef(null);
+  const letterboxdInputRef = useRef(null);
 
   const overviewRef = useRef(null);
   const overviewRectDragRef = useRef(null);
@@ -3221,22 +3238,24 @@ function App() {
     setSelectedEntryId((current) => (current === entryId ? null : current));
   }
 
-  async function handleImport() {
-    if (!importFile) {
+  async function handleImport(selectedFile = importFile, importSource = source) {
+    if (!selectedFile) {
       setImportState({ phase: "error", message: "Choose a file first." });
       return;
     }
 
+    setImportFile(selectedFile);
+    setSource(importSource);
     setImportState({ phase: "analyzing", message: "Analyzing import file..." });
 
     let imported = [];
 
     try {
-      if (source === "goodreads") {
-        const text = await importFile.text();
+      if (importSource === "goodreads") {
+        const text = await selectedFile.text();
         imported = fromGoodreadsCsv(text);
       } else {
-        const buffer = await importFile.arrayBuffer();
+        const buffer = await selectedFile.arrayBuffer();
         imported = await fromLetterboxdZip(buffer);
       }
     } catch {
@@ -3268,7 +3287,7 @@ function App() {
     }
 
     // For Letterboxd imports: enrich with TMDB genres + director, then sort
-    if (source === "letterboxd" && TMDB_API_KEY) {
+    if (importSource === "letterboxd" && TMDB_API_KEY) {
       setImportState({ phase: "analyzing", message: `Fetching film data (0/${imported.length})…` });
       const CONCURRENCY = 4;
       let done = 0;
@@ -3303,8 +3322,8 @@ function App() {
     }
 
     setImportPreview({
-      source,
-      fileName: importFile?.name || "",
+      source: importSource,
+      fileName: selectedFile?.name || "",
       items: imported.map((entry) => ({
         ...entry,
         include: true,
@@ -3313,6 +3332,23 @@ function App() {
     });
     setExpandedImportGenres([]);
     setImportState({ phase: "idle", message: "" });
+  }
+
+  function triggerImportPicker(importSource) {
+    setSource(importSource);
+    setImportState({ phase: "idle", message: "" });
+    if (importSource === "goodreads") {
+      goodreadsInputRef.current?.click();
+    } else {
+      letterboxdInputRef.current?.click();
+    }
+  }
+
+  function onImportFileSelected(event, importSource) {
+    const selectedFile = event.target.files?.[0] || null;
+    if (!selectedFile) return;
+    handleImport(selectedFile, importSource);
+    event.target.value = "";
   }
 
   function closeImportPreview() {
@@ -4099,7 +4135,7 @@ function App() {
                 <button
                   type="button"
                   className={`import-logo-btn ${source === "goodreads" ? "active" : ""}`}
-                  onClick={() => setSource("goodreads")}
+                  onClick={() => triggerImportPicker("goodreads")}
                   title="Goodreads (.csv)"
                   aria-label="Goodreads (.csv)"
                 >
@@ -4108,7 +4144,7 @@ function App() {
                 <button
                   type="button"
                   className={`import-logo-btn ${source === "letterboxd" ? "active" : ""}`}
-                  onClick={() => setSource("letterboxd")}
+                  onClick={() => triggerImportPicker("letterboxd")}
                   title="Letterboxd (.zip)"
                   aria-label="Letterboxd (.zip)"
                 >
@@ -4117,17 +4153,20 @@ function App() {
                   <span className="lb-dot lb-dot-3" />
                 </button>
               </div>
-              <label>
-                File
-                <input
-                  type="file"
-                  accept={source === "goodreads" ? ".csv,text/csv" : ".zip,application/zip"}
-                  onChange={(event) => setImportFile(event.target.files?.[0] || null)}
-                />
-              </label>
-              <button className="primary-btn" type="button" onClick={handleImport}>
-                Import
-              </button>
+              <input
+                ref={goodreadsInputRef}
+                className="import-hidden-input"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => onImportFileSelected(event, "goodreads")}
+              />
+              <input
+                ref={letterboxdInputRef}
+                className="import-hidden-input"
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(event) => onImportFileSelected(event, "letterboxd")}
+              />
               {importState.phase !== "idle" ? <p className="import-status">{importState.message}</p> : null}
             </div>
           </aside>

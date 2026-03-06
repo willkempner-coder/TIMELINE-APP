@@ -970,6 +970,7 @@ html, body, #root {
 
 .import-box { display: grid; gap: 7px; }
 .import-status { margin: 0; color: var(--text-secondary); font-size: 0.75rem; }
+.import-hidden-input { display: none; }
 .import-source-logos {
   display: flex;
   gap: 8px;
