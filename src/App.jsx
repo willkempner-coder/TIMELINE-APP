@@ -4686,6 +4686,7 @@ function App() {
                     })}
 
                     {activeEntries.map((item, index) => {
+                      if (isSingleType) return null;
                       const entry = item.entry;
                       const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
                       return (
@@ -4848,6 +4849,7 @@ function App() {
                     return <line key={`branch-type-line-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
                   })}
                   {activeEntries.map((item, index) => {
+                    if (isSingleType) return null;
                     const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
                     return <line key={`branch-item-line-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={x} y2={detailY} className="branch-line" />;
                   })}
