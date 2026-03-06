@@ -66,6 +66,16 @@ const MEDIA_TYPE_COLORS = {
   painting: "#8f5c39",
   article: "#6a5f4a"
 };
+const MEDIA_TYPE_PLURALS = {
+  book: "Books",
+  movie: "Films",
+  television: "TV",
+  podcast: "Podcasts",
+  theater: "Theater",
+  photo: "Photos",
+  painting: "Paintings",
+  article: "Articles"
+};
 
 const SAMPLE = USE_SEED_DATA ? INITIAL_DATA : [];
 
@@ -680,8 +690,12 @@ function formatClusterLabel(item) {
   const resolution = item.resolution || resolutionFromSpan(item.span || 500);
 
   if (resolution === "century") {
-    const centuryLabel = getOrdinalCentury(item.year);
-    return centuryLabel ? centuryLabel + suffix : `${size} items`;
+    const markers = Array.isArray(item.markers) ? item.markers : [];
+    const years = markers.map((m) => m.primaryYear).filter(Number.isFinite);
+    const representativeYear = years.length > 0 ? (Math.min(...years) + Math.max(...years)) / 2 : item.year;
+    const period = getCenturyPeriod(representativeYear);
+    const centuryLabel = getOrdinalCentury(representativeYear);
+    return centuryLabel ? `${period} ${centuryLabel}${suffix}` : `${size} items`;
   }
 
   if (resolution === "decade") {
@@ -697,6 +711,17 @@ function formatClusterLabel(item) {
 
   // year resolution
   return `${Math.round(item.year)}${suffix}`;
+}
+
+function formatTypeClusterLabel(group, expandedCluster) {
+  if (!group) return "";
+  const years = group.items.map((item) => item.year).filter(Number.isFinite);
+  const representativeYear = years.length > 0 ? (Math.min(...years) + Math.max(...years)) / 2 : expandedCluster?.year;
+  const period = getCenturyPeriod(representativeYear);
+  const centuryLabel = getOrdinalCentury(representativeYear);
+  const typePlural = MEDIA_TYPE_PLURALS[group.mediaType] || `${group.label}s`;
+  const prefix = centuryLabel ? `${period} ${centuryLabel}` : "Cluster";
+  return `${prefix} ${typePlural}`.trim();
 }
 
 function getEntryLaneYear(entry, lane) {
@@ -1093,12 +1118,14 @@ function App() {
   const titleSearchTimerRef = useRef(null);
 
   const [showMonthResolution, setShowMonthResolution] = useState(false);
-  const [showEras, setShowEras] = useState(true);
+  const [showEras, setShowEras] = useState(false);
   const [addShowProdEnd, setAddShowProdEnd] = useState(false);
   const [addShowSetEnd, setAddShowSetEnd] = useState(false);
-  const [showSettingFields, setShowSettingFields] = useState(false);
+  const [showAllMapTypes, setShowAllMapTypes] = useState(false);
   const [tocTagFilter, setTocTagFilter] = useState(null);
   const [hoveredEraId, setHoveredEraId] = useState(null);
+  const [hoveredTimelineLabel, setHoveredTimelineLabel] = useState("");
+  const [hoveredBranchLabel, setHoveredBranchLabel] = useState("");
 
   const [selectedEntryId, setSelectedEntryId] = useState(null);
   const [popupAnchor, setPopupAnchor] = useState(null);
@@ -1197,6 +1224,14 @@ function App() {
   const addButtonRef = useRef(null);
   const zoomDragRef = useRef(null);
   const searchWrapRef = useRef(null);
+  const tocPanelRef = useRef(null);
+  const addSheetRef = useRef(null);
+  const settingsSheetRef = useRef(null);
+  const importPreviewRef = useRef(null);
+  const rangeSheetRef = useRef(null);
+  const clusterGridRef = useRef(null);
+  const rangeInlineWrapRef = useRef(null);
+  const rangeInlineInputRef = useRef(null);
 
   const overviewRef = useRef(null);
   const overviewRectDragRef = useRef(null);
@@ -1213,6 +1248,8 @@ function App() {
   const [canvasRect, setCanvasRect] = useState({ width: 1200, height: 720 });
   const [overviewWidth, setOverviewWidth] = useState(360);
   const [overviewHeight, setOverviewHeight] = useState(OVERVIEW_DEFAULT_HEIGHT);
+  const [showRangeInlineInput, setShowRangeInlineInput] = useState(false);
+  const [rangeInlineValue, setRangeInlineValue] = useState("");
   const popupCloseTimerRef = useRef(null);
   const centerMoveRafRef = useRef(null);
   const pendingZoomSpanRef = useRef(timelineState.span);
@@ -1333,6 +1370,52 @@ function App() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const isClusterInteraction = target instanceof Element && Boolean(
+        target.closest(".node.cluster, .branch-node, .cluster-grid-sheet")
+      );
+
+      const inProtectedUi =
+        searchWrapRef.current?.contains(target) ||
+        popupRef.current?.contains(target) ||
+        tocPanelRef.current?.contains(target) ||
+        addSheetRef.current?.contains(target) ||
+        settingsSheetRef.current?.contains(target) ||
+        importPreviewRef.current?.contains(target) ||
+        rangeSheetRef.current?.contains(target) ||
+        clusterGridRef.current?.contains(target) ||
+        rangeInlineWrapRef.current?.contains(target);
+
+      if (inProtectedUi) return;
+
+      if (showToc) closeTocPanel();
+      if (showAdd) closeAddPanel();
+      if (showSettings) closeSettingsPanel();
+      if (importPreview) closeImportPreview();
+      if (expandedClusterId && !isClusterInteraction) {
+        setExpandedClusterId(null);
+        setExpandedBranchType(null);
+        setHoveredBranchLabel("");
+      }
+      if (gridClusterId) closeClusterGrid();
+      if (selectedEntryIdRef.current) closePopup();
+      if (showRangeInlineInput) setShowRangeInlineInput(false);
+    };
+
+    window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+  }, [expandedClusterId, gridClusterId, importPreview, selectedEntryId, showAdd, showRangeInlineInput, showSettings, showToc]);
+
+  useEffect(() => {
+    if (showRangeInlineInput && rangeInlineInputRef.current) {
+      rangeInlineInputRef.current.focus();
+      rangeInlineInputRef.current.select();
+    }
+  }, [showRangeInlineInput]);
 
   useEffect(() => {
     if (!selectedEntryId) {
@@ -1785,8 +1868,10 @@ function App() {
       const cluster = visibleRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
       if (cluster) return formatClusterLabel(cluster);
     }
+    if (hoveredBranchLabel) return hoveredBranchLabel;
+    if (hoveredTimelineLabel) return hoveredTimelineLabel;
     return "";
-  }, [entries, hoveredClusterId, hoveredEntryId, visibleRenderItems]);
+  }, [entries, hoveredBranchLabel, hoveredClusterId, hoveredEntryId, hoveredTimelineLabel, visibleRenderItems]);
 
   const baseRenderedUnits = useMemo(() => countRenderUnits(visibleRenderItems, timelineState.span), [timelineState.span, visibleRenderItems]);
 
@@ -1807,6 +1892,7 @@ function App() {
     // Prevent stale floating branch artifacts when switching timeline modes.
     setExpandedClusterId(null);
     setExpandedBranchType(null);
+    setHoveredBranchLabel("");
   }, [mode, viewMode]);
 
   useEffect(() => {
@@ -1852,6 +1938,7 @@ function App() {
       return {
         lane: null,
         groups: [],
+        isSingleType: false,
         activeGroup: null,
         activeEntries: []
       };
@@ -1892,11 +1979,15 @@ function App() {
       }))
       .sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
 
-    const activeGroup = groups.find((group) => group.mediaType === expandedBranchType) || null;
+    const isSingleType = groups.length <= 1;
+    const activeGroup = isSingleType
+      ? groups[0] || null
+      : groups.find((group) => group.mediaType === expandedBranchType) || null;
 
     return {
       lane,
       groups,
+      isSingleType,
       activeGroup,
       activeEntries: activeGroup ? activeGroup.items : []
     };
@@ -2667,7 +2758,6 @@ function App() {
       tags: "",
       status: "consumed"
     }));
-    setShowSettingFields(false);
   }
 
   function closePopup() {
@@ -3152,6 +3242,21 @@ function App() {
     setRangeError("");
   }
 
+  function applyRangeLock(start, end) {
+    const rangeStart = Math.min(start, end);
+    const rangeEnd = Math.max(start, end);
+    const span = Math.max(1, rangeEnd - rangeStart);
+    setRangeError("");
+    setLockedRange({ start: rangeStart, end: rangeEnd });
+    pendingViewStartRef.current = rangeStart;
+    pendingZoomSpanRef.current = span;
+    setTimelineState((current) => ({
+      ...current,
+      span,
+      end: rangeStart + span
+    }));
+  }
+
   function openRangePanelFromEdge(side) {
     const windowStart = Math.round(viewStart);
     const windowEnd = Math.round(viewEnd);
@@ -3166,11 +3271,13 @@ function App() {
       raw: `${suggested.start}-${suggested.end}`,
       eraId: ""
     });
+    setRangeInlineValue(`${suggested.start}-${suggested.end}`);
     setRangeError("");
     setShowToc(false);
     setShowAdd(false);
     setShowSettings(false);
-    setShowRangePanel(true);
+    setShowRangePanel(false);
+    setShowRangeInlineInput(true);
   }
 
   function closeClusterGrid() {
@@ -3178,6 +3285,20 @@ function App() {
   }
 
   function toggleMainMenu(menu) {
+    if (menu === "range") {
+      const nextOpen = !showRangeInlineInput;
+      setShowRangeInlineInput(nextOpen);
+      if (nextOpen) {
+        const current = lockedRange ? `${Math.round(lockedRange.start)}-${Math.round(lockedRange.end)}` : rangeDraft.raw || "";
+        setRangeInlineValue(current);
+      }
+      setShowToc(false);
+      setShowAdd(false);
+      setShowSettings(false);
+      setShowRangePanel(false);
+      return;
+    }
+
     const isOpen =
       menu === "toc"
         ? showToc
@@ -3185,14 +3306,14 @@ function App() {
         ? showAdd
         : menu === "settings"
         ? showSettings
-        : showRangePanel;
+        : false;
     const next = !isOpen;
 
     setShowToc(next && menu === "toc");
     setShowAdd(next && menu === "add");
     setShowSettings(next && menu === "settings");
-    setShowRangePanel(next && menu === "range");
-    if (!next || menu !== "range") setRangeError("");
+    setShowRangePanel(false);
+    if (!next) setRangeError("");
   }
 
   function applyManualRange() {
@@ -3208,20 +3329,26 @@ function App() {
       setRangeError("Enter a valid range like 1800-1900.");
       return;
     }
-
-    const rangeStart = Math.min(start, end);
-    const rangeEnd = Math.max(start, end);
-    const span = Math.max(1, rangeEnd - rangeStart);
-    setRangeError("");
-    setLockedRange({ start: rangeStart, end: rangeEnd });
-    pendingViewStartRef.current = rangeStart;
-    pendingZoomSpanRef.current = span;
-    setTimelineState((current) => ({
-      ...current,
-      span,
-      end: rangeStart + span
-    }));
+    applyRangeLock(start, end);
     setShowRangePanel(false);
+  }
+
+  function onRangeInlineSubmit(event) {
+    event.preventDefault();
+    const raw = String(rangeInlineValue || "").trim();
+    if (!raw || /^all(\s*time)?$/i.test(raw)) {
+      clearRangeLock();
+      setShowRangeInlineInput(false);
+      return;
+    }
+    const parsed = parseYearRangeText(raw);
+    if (!parsed) {
+      setRangeError("Enter a valid range like 1800-1900.");
+      return;
+    }
+    applyRangeLock(parsed.start, parsed.end);
+    setRangeDraft((current) => ({ ...current, raw }));
+    setShowRangeInlineInput(false);
   }
 
   function onRangeEraChange(nextEraId) {
@@ -3274,28 +3401,6 @@ function App() {
       </div>
 
       <div className="corner-buttons top-right">
-        {lockedRange ? (
-          <div className="range-lock-chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 8px 0 12px", borderRadius: 8, border: "1px solid var(--stroke-med)", background: "var(--surface)", boxShadow: "var(--shadow-sm)", fontSize: "0.78rem", letterSpacing: "0.03em", color: "var(--text)", whiteSpace: "nowrap" }}>
-            <span
-              style={{ cursor: "pointer" }}
-              onClick={() => toggleMainMenu("range")}
-              title="Edit focused range"
-            >
-              <span style={{ color: "var(--muted)" }}>[</span>
-              {formatTimelineYear(lockedRange.start)} – {formatTimelineYear(lockedRange.end)}
-              <span style={{ color: "var(--muted)" }}>]</span>
-            </span>
-            <button
-              type="button"
-              className="range-lock-chip-close"
-              aria-label="Exit range focus"
-              onClick={(e) => { e.stopPropagation(); clearRangeLock(); }}
-              style={{ marginLeft: 2 }}
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
         <button
           className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
           type="button"
@@ -3325,41 +3430,79 @@ function App() {
       </div>
 
       <div className="corner-buttons bottom-left">
-        <button className="glass-btn settings-icon" type="button" onClick={() => toggleMainMenu("settings")} title="Settings">
-          <svg viewBox="0 0 32 32" aria-hidden="true">
-            <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
-            <circle cx="13" cy="9" r="2.8" />
-            <circle cx="17" cy="16" r="2.8" />
-            <circle cx="13" cy="23" r="2.8" />
-          </svg>
-        </button>
-        <button
-          className="glass-btn"
-          type="button"
-          onClick={() => setDarkMode(v => !v)}
-          title={darkMode ? "Light mode" : "Dark mode"}
-        >
-          {darkMode ? (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-          )}
-        </button>
+        <aside className="map-key-panel" aria-label="Map key">
+          <div className="map-key-media-list">
+            {(showAllMapTypes
+              ? MEDIA_TYPES
+              : MEDIA_TYPES.filter((type) => type.id === "book" || type.id === "movie" || type.id === "podcast")
+            ).map((type) => (
+              <button
+                key={type.id}
+                type="button"
+                className={`map-key-media-item ${soloType === type.id ? "active" : ""}`}
+                onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
+                title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+              >
+                <span className="map-key-dot" style={{ background: colorForMediaType(type.id) }} />
+                <span>{type.id === "movie" ? "Film" : type.label}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="map-key-more-btn"
+              onClick={() => setShowAllMapTypes((current) => !current)}
+              title={showAllMapTypes ? "Show fewer media types" : "Show all media types"}
+            >
+              {showAllMapTypes ? "▴ fewer" : "▾ more"}
+            </button>
+          </div>
+          <div className="map-key-divider" />
+          <button type="button" className={`map-key-control ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)}>
+            Eras: {showEras ? "On" : "Off"}
+          </button>
+          <button type="button" className="map-key-control" onClick={() => toggleMainMenu("settings")}>
+            Timeline options
+          </button>
+          <button type="button" className="map-key-control" onClick={() => setDarkMode((v) => !v)}>
+            {darkMode ? "Light mode" : "Dark mode"}
+          </button>
+        </aside>
       </div>
 
       <div className="corner-buttons bottom-right">
-        {!lockedRange && (
-          <button className="glass-btn range-icon-btn" type="button" onClick={() => toggleMainMenu("range")} title="Focus year range">
+        <div className="range-inline-wrap" ref={rangeInlineWrapRef}>
+          <button
+            className={`glass-btn range-icon-btn ${lockedRange ? "active" : ""}`}
+            type="button"
+            onClick={() => toggleMainMenu("range")}
+            title={lockedRange ? "Edit focused range" : "Focus year range"}
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 4H5v16h3" />
               <path d="M16 4h3v16h-3" />
             </svg>
           </button>
-        )}
+          {showRangeInlineInput ? (
+            <form className="range-inline-form" onSubmit={onRangeInlineSubmit}>
+              <span className="range-bracket">[</span>
+              <input
+                ref={rangeInlineInputRef}
+                value={rangeInlineValue}
+                onChange={(event) => {
+                  setRangeInlineValue(event.target.value);
+                  setRangeError("");
+                }}
+                placeholder="1800-1900"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setShowRangeInlineInput(false);
+                  }
+                }}
+              />
+              <span className="range-bracket">]</span>
+            </form>
+          ) : null}
+        </div>
         <button className="glass-btn" type="button" onClick={resetCompass} title="Compass reset">
           ⊕
         </button>
@@ -3439,8 +3582,8 @@ function App() {
 
       {/* TOC panel with decade grouping */}
       {showToc ? (
-        <div className="panel-overlay menu-toc" onPointerDown={closeTocPanel}>
-          <aside className="toc-panel" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay menu-toc">
+          <aside ref={tocPanelRef} className="toc-panel">
             <div className="panel-head-row">
               <h2>Contents</h2>
               <button className="close-x-btn" type="button" onClick={closeTocPanel} aria-label="Close">×</button>
@@ -3550,8 +3693,8 @@ function App() {
       ) : null}
 
       {showAdd ? (
-        <div className="panel-overlay menu-add" onPointerDown={closeAddPanel}>
-          <aside className="sheet add-sheet" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay menu-add">
+          <aside ref={addSheetRef} className="sheet add-sheet">
             <div className="panel-head-row">
               <h2>Add Media</h2>
               <button className="close-x-btn" type="button" onClick={closeAddPanel} aria-label="Close add media">
@@ -3607,23 +3750,23 @@ function App() {
                 type="button"
                 className={`status-toggle-btn ${addDraft.status === "consumed" ? "active" : ""}`}
                 onClick={() => setAddField("status", "consumed")}
-                title="Mark as consumed"
+                title="Mark as logged"
               >
-                ● Consumed
+                ● Log
               </button>
               <button
                 type="button"
                 className={`status-toggle-btn ${addDraft.status === "want" ? "active" : ""}`}
                 onClick={() => setAddField("status", "want")}
-                title="Mark as want to consume"
+                title="Mark as to do"
               >
-                ○ Want to
+                ○ To Do
               </button>
             </div>
             <div className="year-fields">
               <div className="year-field-row">
                 <label>
-                  Production year
+                  PRODUCTION year
                   <input
                     value={addDraft.productionStart}
                     onChange={(event) => setAddField("productionStart", event.target.value)}
@@ -3636,7 +3779,7 @@ function App() {
                 </button>
                 {addShowProdEnd ? (
                   <label>
-                    End
+                    End year
                     <input
                       value={addDraft.productionEnd}
                       onChange={(event) => setAddField("productionEnd", event.target.value)}
@@ -3646,39 +3789,32 @@ function App() {
                   </label>
                 ) : null}
               </div>
-            </div>
-            <button type="button" className="expand-setting-btn" onClick={() => setShowSettingFields(v => !v)}>
-              {showSettingFields ? "− Set in" : "+ Set in"}
-            </button>
-            {showSettingFields ? (
-              <div className="year-fields">
-                <div className="year-field-row">
+              <div className="year-field-row">
+                <label>
+                  SETTING year
+                  <input
+                    value={addDraft.settingStart}
+                    onChange={(event) => setAddField("settingStart", event.target.value)}
+                    inputMode="numeric"
+                    placeholder="1940s"
+                  />
+                </label>
+                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle setting end year">
+                  {addShowSetEnd ? "−" : "→"}
+                </button>
+                {addShowSetEnd ? (
                   <label>
-                    Period
+                    End year
                     <input
-                      value={addDraft.settingStart}
-                      onChange={(event) => setAddField("settingStart", event.target.value)}
+                      value={addDraft.settingEnd}
+                      onChange={(event) => setAddField("settingEnd", event.target.value)}
                       inputMode="numeric"
-                      placeholder="1940s"
+                      placeholder="1945"
                     />
                   </label>
-                  <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle setting end year">
-                    {addShowSetEnd ? "−" : "→"}
-                  </button>
-                  {addShowSetEnd ? (
-                    <label>
-                      to
-                      <input
-                        value={addDraft.settingEnd}
-                        onChange={(event) => setAddField("settingEnd", event.target.value)}
-                        inputMode="numeric"
-                        placeholder="1945"
-                      />
-                    </label>
-                  ) : null}
-                </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
             <label>
               Notes
               <textarea
@@ -3730,8 +3866,8 @@ function App() {
       ) : null}
 
       {importPreview ? (
-        <div className="panel-overlay import-preview-overlay" onPointerDown={closeImportPreview}>
-          <aside className="import-preview-sheet" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay import-preview-overlay">
+          <aside ref={importPreviewRef} className="import-preview-sheet">
             <div className="panel-head-row">
               <h2>Review Import</h2>
               <button className="close-x-btn" type="button" onClick={closeImportPreview} aria-label="Close import preview">
@@ -3804,8 +3940,8 @@ function App() {
       ) : null}
 
       {showRangePanel ? (
-        <div className="panel-overlay menu-range" onPointerDown={closeRangePanel}>
-          <aside className="sheet range-sheet" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay menu-range">
+          <aside ref={rangeSheetRef} className="sheet range-sheet">
             <div className="panel-head-row">
               <h2>Range Focus</h2>
               <button className="close-x-btn" type="button" onClick={closeRangePanel} aria-label="Close range focus">
@@ -3850,8 +3986,8 @@ function App() {
       ) : null}
 
       {showSettings ? (
-        <div className="panel-overlay menu-settings" onPointerDown={closeSettingsPanel}>
-          <aside className="sheet settings-sheet" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay menu-settings">
+          <aside ref={settingsSheetRef} className="sheet settings-sheet">
             <div className="panel-head-row">
               <h2>Settings</h2>
               <button className="close-x-btn" type="button" onClick={closeSettingsPanel} aria-label="Close settings">
@@ -3924,7 +4060,7 @@ function App() {
       ) : null}
 
       {selectedEntry && editDraft ? (
-        <div className="node-popup-overlay" onPointerDown={closePopup}>
+        <div className="node-popup-overlay">
           {popupGeometry ? (
             <svg className="popup-callout-layer" aria-hidden="true">
               <line x1={popupGeometry.calloutStartX} y1={popupGeometry.calloutStartY} x2={popupGeometry.calloutEndX} y2={popupGeometry.calloutEndY} />
@@ -3939,7 +4075,6 @@ function App() {
               "--from-x": `${popupOrigin.x - ((popupGeometry?.left ?? window.innerWidth / 2 - popupSize.width / 2) + popupSize.width / 2)}px`,
               "--from-y": `${popupOrigin.y - ((popupGeometry?.top ?? 14) + popupSize.height / 2)}px`
             }}
-            onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="detail-header">
               <h2>{editDraft.title || "Untitled"}</h2>
@@ -4154,33 +4289,6 @@ function App() {
         </div>
       ) : null}
 
-      {/* Media type legend — horizontal strip below timeline */}
-      <aside className="media-legend-panel">
-        <div className="media-legend-content">
-          {MEDIA_TYPES.map(type => (
-            <button
-              key={type.id}
-              type="button"
-              className={`media-legend-item ${soloType === type.id ? "active" : ""}`}
-              onClick={() => setSoloType(s => s === type.id ? null : type.id)}
-              title={soloType === type.id ? "Show all types" : `Filter: ${type.label}`}
-            >
-              <span className="media-legend-dot" style={{ background: colorForMediaType(type.id) }} />
-              <span className="media-legend-label">{type.label}</span>
-            </button>
-          ))}
-          {soloType !== null ? (
-            <button
-              type="button"
-              className="media-legend-clear"
-              onClick={() => setSoloType(null)}
-            >
-              ✕ Clear
-            </button>
-          ) : null}
-        </div>
-      </aside>
-
       <section
         ref={canvasRef}
         className="timeline-canvas"
@@ -4191,14 +4299,28 @@ function App() {
           if (canvasRef.current && !lockedRange) {
             const rect = canvasRef.current.getBoundingClientRect();
             const clientX = event.clientX - rect.left;
+            const clientY = event.clientY - rect.top;
             const yearAtX = viewStart + (clientX / canvasRect.width) * timelineState.span;
-            const hoveredEra = HISTORICAL_ERAS.find(era => yearAtX >= era.start && yearAtX <= era.end) || null;
-            setHoveredEraId(hoveredEra?.id || null);
+            const laneYValues = Object.values(lanes);
+            const topLaneY = laneYValues.length > 0 ? Math.min(...laneYValues) : canvasRect.height / 2;
+            const isAboveTimeline = clientY < topLaneY - 8;
+
+            if (showEras) {
+              const hoveredEra = HISTORICAL_ERAS.find((era) => yearAtX >= era.start && yearAtX <= era.end) || null;
+              setHoveredEraId(hoveredEra?.id || null);
+              setHoveredTimelineLabel("");
+            } else {
+              setHoveredEraId(null);
+              setHoveredTimelineLabel(isAboveTimeline ? getOrdinalCentury(yearAtX) : "");
+            }
           }
         }}
         onPointerUp={onDragEnd}
         onPointerCancel={onDragEnd}
-        onPointerLeave={() => setHoveredEraId(null)}
+        onPointerLeave={() => {
+          setHoveredEraId(null);
+          setHoveredTimelineLabel("");
+        }}
       >
         <svg width="100%" height="100%" viewBox={`0 0 ${canvasRect.width} ${canvasRect.height}`}>
           <rect x="0" y="0" width={canvasRect.width} height={canvasRect.height} fill="transparent" />
@@ -4484,6 +4606,7 @@ function App() {
                 const baseY = lanes[branchLane] ?? canvasRect.height / 2;
                 const baseX = expandedCluster.x;
                 const typeGroups = expandedBranchData.groups;
+                const isSingleType = expandedBranchData.isSingleType;
                 const activeGroup = expandedBranchData.activeGroup;
                 const activeEntries = expandedBranchData.activeEntries;
                 const groupY = branchLane === MODE_PRODUCTION ? baseY - 84 : baseY + 84;
@@ -4494,6 +4617,7 @@ function App() {
                 const activeGroupX = activeGroupIndex >= 0
                   ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
                   : baseX;
+                const directEntries = isSingleType ? (activeGroup?.items || []) : [];
 
                 // Separate groups with 1 item (render directly) from groups with 2+ items (render as branch nodes)
                 const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
@@ -4503,6 +4627,7 @@ function App() {
                 return (
                   <>
                     {multiItemGroups.map((group, index) => {
+                      if (isSingleType) return null;
                       const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
                       const isActiveType = expandedBranchType === group.mediaType;
                       return (
@@ -4512,7 +4637,9 @@ function App() {
                           className={`node branch-node type-group-node${isActiveType ? " active" : ""}`}
                           style={{ left: `${x}px`, top: `${groupY}px`, background: colorForMediaType(group.mediaType) }}
                           onClick={() => setExpandedBranchType((current) => (current === group.mediaType ? null : group.mediaType))}
-                          title={`${group.label}: ${group.count}`}
+                          onMouseEnter={() => setHoveredBranchLabel(formatTypeClusterLabel(group, expandedCluster))}
+                          onMouseLeave={() => setHoveredBranchLabel("")}
+                          title={formatTypeClusterLabel(group, expandedCluster)}
                         >
                           {group.count}
                         </button>
@@ -4547,6 +4674,7 @@ function App() {
                     })}
 
                     {allSingleItems.map((item, index) => {
+                      if (isSingleType) return null;
                       const entry = item.entry;
                       const x = spreadX(baseX, index, allSingleItems.length, groupSpacing);
                       return (
@@ -4554,6 +4682,33 @@ function App() {
                           key={`branch-single-${entry.id}`}
                           type="button"
                           className="node branch-node"
+                          style={{ left: `${x}px`, top: `${groupY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
+                          onMouseEnter={() => setHoveredEntryId(entry.id)}
+                          onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
+                          onClick={(event) =>
+                            onNodeActivate(
+                              {
+                                entryId: entry.id,
+                                lane: branchLane,
+                                anchorYear: item.year,
+                                resolution: "year"
+                              },
+                              event
+                            )
+                          }
+                          title={entry.title}
+                        />
+                      );
+                    })}
+
+                    {directEntries.map((item, index) => {
+                      const entry = item.entry;
+                      const x = spreadX(baseX, index, directEntries.length, itemSpacing);
+                      return (
+                        <button
+                          key={`branch-direct-${entry.id}`}
+                          type="button"
+                          className="node branch-node branch-item-node"
                           style={{ left: `${x}px`, top: `${groupY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
                           onMouseEnter={() => setHoveredEntryId(entry.id)}
                           onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
@@ -4628,6 +4783,7 @@ function App() {
               const baseY = lanes[branchLane] ?? canvasRect.height / 2;
               const baseX = expandedCluster.x;
               const typeGroups = expandedBranchData.groups;
+              const isSingleType = expandedBranchData.isSingleType;
               const activeGroup = expandedBranchData.activeGroup;
               const activeEntries = expandedBranchData.activeEntries;
               const groupY = branchLane === MODE_PRODUCTION ? baseY - 84 : baseY + 84;
@@ -4638,6 +4794,7 @@ function App() {
               const activeGroupX = activeGroupIndex >= 0
                 ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
                 : baseX;
+              const directEntries = isSingleType ? (activeGroup?.items || []) : [];
 
               // Separate groups with 1 item (render directly) from groups with 2+ items
               const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
@@ -4647,6 +4804,7 @@ function App() {
               return (
                 <>
                   {multiItemGroups.map((group, index) => {
+                    if (isSingleType) return null;
                     const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
                     return <line key={`branch-type-line-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
                   })}
@@ -4654,12 +4812,16 @@ function App() {
                     const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
                     return <line key={`branch-item-line-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={x} y2={detailY} className="branch-line" />;
                   })}
+                  {directEntries.map((item, index) => {
+                    const x = spreadX(baseX, index, directEntries.length, itemSpacing);
+                    return <line key={`branch-direct-line-${item.entry.id}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
+                  })}
                 </>
               );
             })()}
           </svg>
         ) : null}
-        {hoveredEraId && canvasRef.current ? (() => {
+        {showEras && hoveredEraId && canvasRef.current ? (() => {
           const era = HISTORICAL_ERAS.find(e => e.id === hoveredEraId);
           if (!era) return null;
           const rect = canvasRef.current.getBoundingClientRect();
@@ -4895,8 +5057,8 @@ function App() {
       </section>
 
       {gridCluster ? (
-        <div className="panel-overlay" onPointerDown={closeClusterGrid}>
-          <section className="cluster-grid-sheet" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="panel-overlay">
+          <section ref={clusterGridRef} className="cluster-grid-sheet">
             <div className="cluster-grid-header">
               <h2>{gridEntries.length} items in cluster</h2>
               <button className="close-x-btn" type="button" onClick={closeClusterGrid} aria-label="Close cluster view">
