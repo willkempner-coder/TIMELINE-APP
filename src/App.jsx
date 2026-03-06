@@ -3066,7 +3066,8 @@ function App() {
     const absY = Math.abs(event.deltaY);
 
     if (event.metaKey || event.ctrlKey) {
-      const factor = event.deltaY < 0 ? 1.048 : 0.952;
+      // Trackpad pinch: invert mapping so gesture direction matches app zoom expectation.
+      const factor = event.deltaY < 0 ? 0.952 : 1.048;
       updateSpan(pendingZoomSpanRef.current * factor, event.clientX);
       refreshTimelineHoverAt(event.clientX, event.clientY, pendingViewStartRef.current, pendingZoomSpanRef.current);
       return;
@@ -3761,7 +3762,7 @@ function App() {
       mediaType: editDraft.mediaType,
       title: String(editDraft.title || "").trim(),
       creator: String(editDraft.creator || "").trim(),
-      director: String(editDraft.director || "").trim(),
+      director: String((editDraft.director ?? existing?.director) || "").trim(),
       productionStart: toYear(editDraft.productionStart),
       productionEnd: toYear(editDraft.productionEnd) ?? toYear(editDraft.productionStart),
       settingStart: nextSettingStart,
@@ -5293,10 +5294,6 @@ function App() {
                   <input value={editDraft.creator} onChange={(event) => setEditDraft((current) => ({ ...current, creator: event.target.value }))} />
                 </label>
                 <label>
-                  Director
-                  <input value={editDraft.director ?? ""} onChange={(event) => setEditDraft((current) => ({ ...current, director: event.target.value }))} />
-                </label>
-                <label>
                   Type
                   <select
                     value={editDraft.mediaType}
@@ -5381,9 +5378,6 @@ function App() {
               <div className="detail-readonly">
                 <p><strong>Type:</strong> {getType(selectedEntry.mediaType).label}</p>
                 <p><strong>Creator:</strong> {selectedEntry.creator || "—"}</p>
-                {(selectedEntry.mediaType === "movie" || selectedEntry.mediaType === "television" || selectedEntry.director) ? (
-                  <p><strong>Director:</strong> {selectedEntry.director || "—"}</p>
-                ) : null}
                 <p><strong>PRODUCTION:</strong> {selectedEntry.productionStart ?? "—"} {selectedEntry.productionEnd && selectedEntry.productionEnd !== selectedEntry.productionStart ? `→ ${selectedEntry.productionEnd}` : ""}</p>
                 <p><strong>SETTING:</strong> {selectedEntry.settingStart ?? "—"} {selectedEntry.settingEnd && selectedEntry.settingEnd !== selectedEntry.settingStart ? `→ ${selectedEntry.settingEnd}` : ""}</p>
 
@@ -5606,37 +5600,35 @@ function App() {
             />
           ) : null}
 
-          {rangeLines.map((rangeLine) => (
+          {rangeLines.map((rangeLine) => {
+            const isActive = selectedEntryId === rangeLine.marker.entryId;
+            const spanColor = rangeLine.marker.color || colorForMediaType(rangeLine.marker.mediaType);
+            return (
             <g key={`range-${rangeLine.marker.id}`}>
-              {(() => {
-                const isActive =
-                  hoveredRangeMarkerId === rangeLine.marker.id ||
-                  hoveredEntryId === rangeLine.marker.entryId ||
-                  selectedEntryId === rangeLine.marker.entryId;
-                const spanColor = rangeLine.marker.color || colorForMediaType(rangeLine.marker.mediaType);
-                return (
-                  <line
-                    x1={rangeLine.marker.xStart}
-                    y1={rangeLine.marker.lineY}
-                    x2={rangeLine.marker.xEnd}
-                    y2={rangeLine.marker.lineY}
-                    stroke={spanColor}
-                    strokeWidth={isActive ? "6" : "4"}
-                    strokeLinecap="round"
-                    opacity={isActive ? "0.98" : "0"}
-                    style={{ transition: "stroke-width 160ms ease, opacity 160ms ease", cursor: "pointer", pointerEvents: "stroke" }}
-                    onMouseEnter={() => {
-                      setHoveredRangeMarkerId(rangeLine.marker.id);
-                      setHoveredEntryId(rangeLine.marker.entryId);
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current));
-                      setHoveredEntryId((current) => (current === rangeLine.marker.entryId ? null : current));
-                    }}
-                    onClick={(event) => onRangeLineActivate(rangeLine, event)}
-                  />
-                );
-              })()}
+              <line
+                x1={rangeLine.marker.xStart}
+                y1={rangeLine.marker.lineY}
+                x2={rangeLine.marker.xEnd}
+                y2={rangeLine.marker.lineY}
+                stroke={spanColor}
+                strokeWidth={isActive ? "6" : "4"}
+                strokeLinecap="round"
+                opacity={isActive ? "0.98" : "0"}
+                style={{
+                  transition: "stroke-width 160ms ease, opacity 160ms ease",
+                  cursor: isActive ? "pointer" : "default",
+                  pointerEvents: isActive ? "stroke" : "none"
+                }}
+                onMouseEnter={() => {
+                  setHoveredRangeMarkerId(rangeLine.marker.id);
+                  setHoveredEntryId(rangeLine.marker.entryId);
+                }}
+                onMouseLeave={() => {
+                  setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current));
+                  setHoveredEntryId((current) => (current === rangeLine.marker.entryId ? null : current));
+                }}
+                onClick={(event) => onRangeLineActivate(rangeLine, event)}
+              />
               <line
                 x1={rangeLine.marker.xStart}
                 y1={rangeLine.marker.lineY}
@@ -5645,7 +5637,10 @@ function App() {
                 stroke="transparent"
                 strokeWidth="20"
                 strokeLinecap="round"
-                style={{ cursor: "pointer", pointerEvents: "stroke" }}
+                style={{
+                  cursor: isActive ? "pointer" : "default",
+                  pointerEvents: isActive ? "stroke" : "none"
+                }}
                 onMouseEnter={() => {
                   setHoveredRangeMarkerId(rangeLine.marker.id);
                   setHoveredEntryId(rangeLine.marker.entryId);
@@ -5657,7 +5652,8 @@ function App() {
                 onClick={(event) => onRangeLineActivate(rangeLine, event)}
               />
             </g>
-          ))}
+            );
+          })}
 
 
           {(() => {
@@ -5704,8 +5700,8 @@ function App() {
             const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
             const allSingleItems = typeGroups.filter((g) => g.items.length === 1).flatMap((g) => g.items);
             const directEntries = isSingleType ? (activeGroup?.items || []) : [];
-            const activeGroupIndex = activeGroup ? typeGroups.findIndex((g) => g.mediaType === activeGroup.mediaType) : -1;
-            const activeGroupX = activeGroupIndex >= 0 ? spreadX(baseX, activeGroupIndex, typeGroups.length, gSpacing) : baseX;
+            const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((g) => g.mediaType === activeGroup.mediaType) : -1;
+            const activeGroupX = activeGroupIndex >= 0 ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, gSpacing) : baseX;
             const lineProps = { stroke: "var(--stroke-strong)", strokeWidth: "1", opacity: "0.5", strokeLinecap: "round" };
             return (
               <g className="branch-connectors" pointerEvents="none">
@@ -5764,9 +5760,6 @@ function App() {
             const isSelected = selectedEntryId === marker.entryId;
             const isSearchHovered = hasSearchHoverFocus && hoveredEntryId === marker.entryId;
             const isFaded = (selectedEntryId && !isSelected) || (hasSearchHoverFocus && hoveredEntryId && hoveredEntryId !== marker.entryId);
-            const isRangeActive =
-              marker.rangeEnd > marker.rangeStart &&
-              (hoveredRangeMarkerId === marker.id || hoveredEntryId === marker.entryId || isSelected);
 
             const nodeColor = marker.color || colorForMediaType(marker.mediaType);
             const isWantStatus = entry.status === "want";
@@ -5818,7 +5811,7 @@ function App() {
                   ) : type.icon}
                 </button>
 
-                {isRangeActive ? (
+                {marker.rangeEnd > marker.rangeStart ? (
                   <button
                     type="button"
                     className="node end-cap"
@@ -5865,16 +5858,16 @@ function App() {
                 const detailY = branchLane === MODE_PRODUCTION ? groupY - 70 : groupY + 70;
                 const groupSpacing = 46;
                 const itemSpacing = 24;
-                const activeGroupIndex = activeGroup ? typeGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
-                const activeGroupX = activeGroupIndex >= 0
-                  ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
-                  : baseX;
                 const directEntries = isSingleType ? (activeGroup?.items || []) : [];
 
                 // Separate groups with 1 item (render directly) from groups with 2+ items (render as branch nodes)
                 const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
                 const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
                 const allSingleItems = singleItemGroups.flatMap((g) => g.items);
+                const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+                const activeGroupX = activeGroupIndex >= 0
+                  ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, groupSpacing)
+                  : baseX;
 
                 return (
                   <>
@@ -6043,16 +6036,16 @@ function App() {
               const detailY = branchLane === MODE_PRODUCTION ? groupY - 70 : groupY + 70;
               const groupSpacing = 46;
               const itemSpacing = 24;
-              const activeGroupIndex = activeGroup ? typeGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
-              const activeGroupX = activeGroupIndex >= 0
-                ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
-                : baseX;
               const directEntries = isSingleType ? (activeGroup?.items || []) : [];
 
               // Separate groups with 1 item (render directly) from groups with 2+ items
               const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
               const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
               const allSingleItems = singleItemGroups.flatMap((g) => g.items);
+              const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+              const activeGroupX = activeGroupIndex >= 0
+                ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, groupSpacing)
+                : baseX;
 
               return (
                 <>
