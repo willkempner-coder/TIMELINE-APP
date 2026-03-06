@@ -5625,8 +5625,14 @@ function App() {
                     strokeLinecap="round"
                     opacity={isActive ? "0.98" : "0"}
                     style={{ transition: "stroke-width 160ms ease, opacity 160ms ease", cursor: "pointer", pointerEvents: "stroke" }}
-                    onMouseEnter={() => setHoveredRangeMarkerId(rangeLine.marker.id)}
-                    onMouseLeave={() => setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current))}
+                    onMouseEnter={() => {
+                      setHoveredRangeMarkerId(rangeLine.marker.id);
+                      setHoveredEntryId(rangeLine.marker.entryId);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current));
+                      setHoveredEntryId((current) => (current === rangeLine.marker.entryId ? null : current));
+                    }}
                     onClick={(event) => onRangeLineActivate(rangeLine, event)}
                   />
                 );
@@ -5640,8 +5646,14 @@ function App() {
                 strokeWidth="20"
                 strokeLinecap="round"
                 style={{ cursor: "pointer", pointerEvents: "stroke" }}
-                onMouseEnter={() => setHoveredRangeMarkerId(rangeLine.marker.id)}
-                onMouseLeave={() => setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current))}
+                onMouseEnter={() => {
+                  setHoveredRangeMarkerId(rangeLine.marker.id);
+                  setHoveredEntryId(rangeLine.marker.entryId);
+                }}
+                onMouseLeave={() => {
+                  setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current));
+                  setHoveredEntryId((current) => (current === rangeLine.marker.entryId ? null : current));
+                }}
                 onClick={(event) => onRangeLineActivate(rangeLine, event)}
               />
             </g>
@@ -5752,6 +5764,9 @@ function App() {
             const isSelected = selectedEntryId === marker.entryId;
             const isSearchHovered = hasSearchHoverFocus && hoveredEntryId === marker.entryId;
             const isFaded = (selectedEntryId && !isSelected) || (hasSearchHoverFocus && hoveredEntryId && hoveredEntryId !== marker.entryId);
+            const isRangeActive =
+              marker.rangeEnd > marker.rangeStart &&
+              (hoveredRangeMarkerId === marker.id || hoveredEntryId === marker.entryId || isSelected);
 
             const nodeColor = marker.color || colorForMediaType(marker.mediaType);
             const isWantStatus = entry.status === "want";
@@ -5803,7 +5818,7 @@ function App() {
                   ) : type.icon}
                 </button>
 
-                {timelineState.span <= 220 && marker.rangeEnd > marker.rangeStart ? (
+                {isRangeActive ? (
                   <button
                     type="button"
                     className="node end-cap"
