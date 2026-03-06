@@ -3400,19 +3400,6 @@ function App() {
 
       <div className="corner-buttons top-right">
         <button
-          className={`glass-btn ${showSettings ? "active" : ""}`}
-          type="button"
-          onClick={() => toggleMainMenu("settings")}
-          title="Settings"
-        >
-          <svg viewBox="0 0 32 32" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
-            <circle cx="13" cy="9" r="2.8" />
-            <circle cx="17" cy="16" r="2.8" />
-            <circle cx="13" cy="23" r="2.8" />
-          </svg>
-        </button>
-        <button
           className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
           type="button"
           onClick={() => setViewMode(v => v === "timeline" ? "scatter" : "timeline")}
@@ -3449,7 +3436,7 @@ function App() {
                 type="button"
                 className={`map-key-icon-btn map-key-type-btn ${soloType === type.id ? "active" : ""}`}
                 onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
-                title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+                data-tip={soloType === type.id ? "Show all" : type.label}
                 style={{ "--type-color": colorForMediaType(type.id) }}
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3462,7 +3449,7 @@ function App() {
               type="button"
               className={`map-key-icon-btn ${showAllMapTypes ? "active" : ""}`}
               onClick={() => setShowAllMapTypes((current) => !current)}
-              title={showAllMapTypes ? "Show fewer media types" : "Show all media types"}
+              data-tip={showAllMapTypes ? "Fewer types" : "More types"}
             >
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="4" y1="7" x2="20" y2="7" />
@@ -3471,13 +3458,13 @@ function App() {
               </svg>
             </button>
 
-            <button type="button" className={`map-key-icon-btn ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)} title="Era zones">
+            <button type="button" className={`map-key-icon-btn ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)} data-tip="Era zones">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 7h18M3 12h18M3 17h18" />
-                <path d="M7 4v16M17 4v16" />
+                <path d="M5 2h14M5 22h14" />
+                <path d="M6 2l6 9 6-9M6 22l6-9 6 9" />
               </svg>
             </button>
-            <button type="button" className="map-key-icon-btn" onClick={() => setDarkMode((v) => !v)} title={darkMode ? "Light mode" : "Dark mode"}>
+            <button type="button" className="map-key-icon-btn" onClick={() => setDarkMode((v) => !v)} data-tip={darkMode ? "Light mode" : "Dark mode"}>
               {darkMode ? (
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="12" cy="12" r="5" />
@@ -3501,7 +3488,7 @@ function App() {
                   type="button"
                   className={`map-key-icon-btn map-key-type-btn ${soloType === type.id ? "active" : ""}`}
                   onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
-                  title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+                  data-tip={soloType === type.id ? "Show all" : type.label}
                   style={{ "--type-color": colorForMediaType(type.id) }}
                 >
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3517,19 +3504,8 @@ function App() {
 
       <div className="corner-buttons bottom-right">
         <div className="range-inline-wrap" ref={rangeInlineWrapRef}>
-          <button
-            className={`glass-btn range-icon-btn ${lockedRange ? "active" : ""}`}
-            type="button"
-            onClick={() => toggleMainMenu("range")}
-            title={lockedRange ? "Edit focused range" : "Focus year range"}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8 4H5v16h3" />
-              <path d="M16 4h3v16h-3" />
-            </svg>
-          </button>
           {showRangeInlineInput ? (
-            <form className="range-inline-form" onSubmit={onRangeInlineSubmit}>
+            <form className="range-inline-form range-inline-expanded" onSubmit={onRangeInlineSubmit}>
               <span className="range-bracket">[</span>
               <input
                 ref={rangeInlineInputRef}
@@ -3538,7 +3514,7 @@ function App() {
                   setRangeInlineValue(event.target.value);
                   setRangeError("");
                 }}
-                placeholder="1800-1900"
+                placeholder="1800–1900"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     setShowRangeInlineInput(false);
@@ -3547,7 +3523,19 @@ function App() {
               />
               <span className="range-bracket">]</span>
             </form>
-          ) : null}
+          ) : (
+            <button
+              className={`glass-btn range-icon-btn ${lockedRange ? "active" : ""}`}
+              type="button"
+              onClick={() => toggleMainMenu("range")}
+              data-tip={lockedRange ? "Edit range" : "Focus range"}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 4H5v16h3" />
+                <path d="M16 4h3v16h-3" />
+              </svg>
+            </button>
+          )}
         </div>
         <button className="glass-btn" type="button" onClick={resetCompass} title="Compass reset">
           ⊕

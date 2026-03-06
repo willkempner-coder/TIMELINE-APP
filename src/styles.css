@@ -77,6 +77,33 @@ html, body, #root {
   height: 100vh;
 }
 
+/* ─── Fast CSS tooltips ─── */
+[data-tip] {
+  position: relative;
+}
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 0.67rem;
+  font-family: "Inter", sans-serif;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms ease;
+  z-index: 9999;
+}
+[data-tip]:hover::after {
+  opacity: 1;
+}
+
 /* ─── Corner buttons ─── */
 .corner-buttons {
   position: absolute;
@@ -229,21 +256,26 @@ html, body, #root {
 .range-inline-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
 }
 .range-inline-form {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   height: 36px;
-  padding: 0 8px;
+  padding: 0 10px;
   border-radius: 8px;
   border: 1px solid var(--stroke-med);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(4px);
+  animation: range-expand 120ms ease;
+}
+@keyframes range-expand {
+  from { opacity: 0; transform: scaleX(0.7); transform-origin: right center; }
+  to   { opacity: 1; transform: scaleX(1); }
 }
 .range-inline-form input {
-  width: 116px;
+  width: 100px;
   border: none;
   background: transparent;
   color: var(--text);
