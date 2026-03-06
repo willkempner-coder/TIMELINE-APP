@@ -5601,7 +5601,10 @@ function App() {
           ) : null}
 
           {rangeLines.map((rangeLine) => {
-            const isActive = selectedEntryId === rangeLine.marker.entryId;
+            const isActive =
+              selectedEntryId === rangeLine.marker.entryId ||
+              hoveredRangeMarkerId === rangeLine.marker.id ||
+              hoveredEntryId === rangeLine.marker.entryId;
             const spanColor = rangeLine.marker.color || colorForMediaType(rangeLine.marker.mediaType);
             return (
             <g key={`range-${rangeLine.marker.id}`}>
