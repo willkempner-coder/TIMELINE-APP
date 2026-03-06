@@ -4317,25 +4317,36 @@ function App() {
                 </div>
               ) : null;
             })()}
-            <div className="toc-list">
-              {(() => {
-                // Group by decade based on setting date
-                const getYear = (entry) => entry.settingStart ?? entry.settingEnd ?? entry.productionStart;
-                const grouped = new Map();
-                for (const entry of tocEntries) {
-                  if (tocTypeFilter !== null && entry.mediaType !== tocTypeFilter) continue;
-                  const year = getYear(entry);
-                  const decade = Number.isFinite(year) ? Math.floor(year / 10) * 10 : null;
-                  const key = decade !== null ? `${decade}s` : "Unknown";
-                  if (!grouped.has(key)) grouped.set(key, { label: key, decade, entries: [] });
-                  grouped.get(key).entries.push(entry);
-                }
-                const groups = Array.from(grouped.values()).sort((a, b) => {
-                  if (a.decade === null) return 1;
-                  if (b.decade === null) return -1;
-                  return b.decade - a.decade;
-                });
-                return groups.map(group => (
+            <div className="toc-list-wrap">
+              <div
+                ref={tocRailRef}
+                className="toc-scrub-rail"
+                onPointerDown={onTocRailPointerDown}
+                aria-label="TOC timeline scrubber"
+                role="slider"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(tocScrollRatio * 100)}
+              >
+                <div className="toc-scrub-line" />
+                {tocCenturyStops.map((stop) => (
+                  <button
+                    key={stop.key}
+                    type="button"
+                    className="toc-scrub-stop"
+                    style={{ top: `${stop.ratio * 100}%` }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      jumpTocToRatio(stop.ratio);
+                    }}
+                    data-tip={stop.label}
+                    aria-label={`Jump to ${stop.label}`}
+                  />
+                ))}
+                <div className="toc-scrub-thumb" style={{ top: `${tocScrollRatio * 100}%` }} />
+              </div>
+              <div ref={tocListRef} className="toc-list" onScroll={updateTocScrollRatio}>
+                {tocGroups.map(group => (
                   <div key={group.label} className="toc-decade-group">
                     <div className="toc-decade-label">{group.label}</div>
                     {group.entries.map(entry => (
@@ -4355,8 +4366,8 @@ function App() {
                       </div>
                     ))}
                   </div>
-                ));
-              })()}
+                ))}
+              </div>
             </div>
           </aside>
         </div>
