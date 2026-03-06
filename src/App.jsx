@@ -1288,71 +1288,6 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    function onKeyDown(event) {
-      // Don't handle keys if focus is on an input, textarea, or select
-      const target = document.activeElement;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
-        return;
-      }
-
-      const key = event.key;
-      const span = pendingZoomSpanRef.current;
-      const start = pendingViewStartRef.current;
-      const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
-
-      switch (key) {
-        case "ArrowLeft": {
-          event.preventDefault();
-          const panAmt = span * 0.1;
-          pendingViewStartRef.current = start - panAmt;
-          scheduleTimelineWindow(start - panAmt, span);
-          break;
-        }
-        case "ArrowRight": {
-          event.preventDefault();
-          const panAmt = span * 0.1;
-          pendingViewStartRef.current = start + panAmt;
-          scheduleTimelineWindow(start + panAmt, span);
-          break;
-        }
-        case "ArrowUp":
-        case "=":
-        case "+": {
-          event.preventDefault();
-          updateSpan(Math.max(0.4, span * 0.85));
-          break;
-        }
-        case "ArrowDown":
-        case "-": {
-          event.preventDefault();
-          updateSpan(Math.min(maxSpan, span * 1.15));
-          break;
-        }
-        case "Home": {
-          event.preventDefault();
-          const homeSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
-          pendingViewStartRef.current = timelineBounds.start;
-          scheduleTimelineWindow(timelineBounds.start, homeSpan);
-          break;
-        }
-        case "End": {
-          event.preventDefault();
-          const endSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
-          const endStart = Math.max(timelineBounds.start, timelineBounds.end - endSpan);
-          pendingViewStartRef.current = endStart;
-          scheduleTimelineWindow(endStart, endSpan);
-          break;
-        }
-        default:
-          break;
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [timelineBounds]);
-
   useLayoutEffect(() => {
     if (!popupRef.current) return undefined;
 
@@ -1480,6 +1415,71 @@ function App() {
       span: Math.max(1, end - start)
     };
   }, [lockedRange, overviewRange]);
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      // Don't handle keys if focus is on an input, textarea, or select
+      const target = document.activeElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+        return;
+      }
+
+      const key = event.key;
+      const span = pendingZoomSpanRef.current;
+      const start = pendingViewStartRef.current;
+      const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
+
+      switch (key) {
+        case "ArrowLeft": {
+          event.preventDefault();
+          const panAmt = span * 0.1;
+          pendingViewStartRef.current = start - panAmt;
+          scheduleTimelineWindow(start - panAmt, span);
+          break;
+        }
+        case "ArrowRight": {
+          event.preventDefault();
+          const panAmt = span * 0.1;
+          pendingViewStartRef.current = start + panAmt;
+          scheduleTimelineWindow(start + panAmt, span);
+          break;
+        }
+        case "ArrowUp":
+        case "=":
+        case "+": {
+          event.preventDefault();
+          updateSpan(Math.max(0.4, span * 0.85));
+          break;
+        }
+        case "ArrowDown":
+        case "-": {
+          event.preventDefault();
+          updateSpan(Math.min(maxSpan, span * 1.15));
+          break;
+        }
+        case "Home": {
+          event.preventDefault();
+          const homeSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
+          pendingViewStartRef.current = timelineBounds.start;
+          scheduleTimelineWindow(timelineBounds.start, homeSpan);
+          break;
+        }
+        case "End": {
+          event.preventDefault();
+          const endSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
+          const endStart = Math.max(timelineBounds.start, timelineBounds.end - endSpan);
+          pendingViewStartRef.current = endStart;
+          scheduleTimelineWindow(endStart, endSpan);
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [timelineBounds]);
 
   const overviewHandle = useMemo(() => {
     const left = ((viewStart - timelineBounds.start) / timelineBounds.span) * overviewWidth;
