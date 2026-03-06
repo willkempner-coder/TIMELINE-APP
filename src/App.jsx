@@ -4138,6 +4138,7 @@ function App() {
                   onClick={() => triggerImportPicker("goodreads")}
                   title="Goodreads (.csv)"
                   aria-label="Goodreads (.csv)"
+                  data-tip="Goodreads (.csv)"
                 >
                   <span className="goodreads-logo-mark">g</span>
                 </button>
@@ -4147,6 +4148,7 @@ function App() {
                   onClick={() => triggerImportPicker("letterboxd")}
                   title="Letterboxd (.zip)"
                   aria-label="Letterboxd (.zip)"
+                  data-tip="Letterboxd (.zip)"
                 >
                   <span className="lb-dot lb-dot-1" />
                   <span className="lb-dot lb-dot-2" />
