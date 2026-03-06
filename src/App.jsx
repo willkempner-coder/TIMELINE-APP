@@ -1207,6 +1207,7 @@ function App() {
   const [soloType, setSoloType] = useState(null); // null = show all, string = solo that type
   const [tocTypeFilter, setTocTypeFilter] = useState(null); // null = show all types in TOC
   const [tocPendingDeleteId, setTocPendingDeleteId] = useState(null);
+  const [tocConfirmDeleteAll, setTocConfirmDeleteAll] = useState(false);
   const [preZoomState, setPreZoomState] = useState(null); // saved zoom state before node click
   const preZoomStateRef = useRef(null);
 
@@ -3719,8 +3720,25 @@ function App() {
           <aside ref={tocPanelRef} className="toc-panel">
             <div className="panel-head-row">
               <h2>Contents</h2>
+              <button
+                type="button"
+                className="toc-delete-all-btn"
+                onClick={() => setTocConfirmDeleteAll(true)}
+                title="Delete all entries"
+              >
+                Delete All
+              </button>
               <button className="close-x-btn" type="button" onClick={closeTocPanel} aria-label="Close">×</button>
             </div>
+            {tocConfirmDeleteAll ? (
+              <div className="toc-delete-all-confirm">
+                <span>Delete all {entries.length} items? This cannot be undone.</span>
+                <div className="toc-delete-all-actions">
+                  <button type="button" className="toc-delete-yes" onClick={() => { setEntries([]); setTocConfirmDeleteAll(false); setSelectedEntryId(null); }}>Yes, delete all</button>
+                  <button type="button" className="toc-delete-no" onClick={() => setTocConfirmDeleteAll(false)}>Cancel</button>
+                </div>
+              </div>
+            ) : null}
             <div className="toc-type-filter">
               {MEDIA_TYPES.map(type => (
                 <button
@@ -3840,34 +3858,45 @@ function App() {
                 ))}
               </select>
             </label>
-            <label>
-              Title
-              <div className="title-search-wrap">
+            <div className="title-released-row">
+              <label className="title-label-wrap">
+                Title
+                <div className="title-search-wrap">
+                  <input
+                    value={addDraft.title}
+                    onChange={(event) => onAddTitleChange(event.target.value)}
+                    placeholder="Search title…"
+                    autoComplete="off"
+                    required
+                  />
+                  {titleSearchLoading ? <span className="title-search-spinner">…</span> : null}
+                  {titleSuggestions.length > 0 ? (
+                    <div className="title-suggestions">
+                      {titleSuggestions.map(s => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          className="title-suggestion-item"
+                          onClick={() => onSelectTitleSuggestion(s)}
+                        >
+                          <span className="suggestion-label">{s.label}</span>
+                          {s.description ? <span className="suggestion-desc">{s.description}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+              <label className="released-label-wrap">
+                Released
                 <input
-                  value={addDraft.title}
-                  onChange={(event) => onAddTitleChange(event.target.value)}
-                  placeholder="Search title…"
-                  autoComplete="off"
-                  required
+                  value={addDraft.productionStart}
+                  onChange={(event) => setAddField("productionStart", event.target.value)}
+                  inputMode="numeric"
+                  placeholder="2019"
                 />
-                {titleSearchLoading ? <span className="title-search-spinner">…</span> : null}
-                {titleSuggestions.length > 0 ? (
-                  <div className="title-suggestions">
-                    {titleSuggestions.map(s => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        className="title-suggestion-item"
-                        onClick={() => onSelectTitleSuggestion(s)}
-                      >
-                        <span className="suggestion-label">{s.label}</span>
-                        {s.description ? <span className="suggestion-desc">{s.description}</span> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </label>
+              </label>
+            </div>
             <label>
               Author / Creator
               <input value={addDraft.creator} onChange={(event) => setAddField("creator", event.target.value)} />
@@ -4383,6 +4412,15 @@ function App() {
                 {/* Per-entry color picker */}
                 <div className="node-color-row">
                   <span className="node-color-label">Color</span>
+                  {selectedEntry.color ? (
+                    <button
+                      type="button"
+                      className="color-reset-btn"
+                      onClick={() => setEntries(prev => prev.map(en => en.id === selectedEntry.id ? { ...en, color: null } : en))}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
                   <div className="color-swatch-grid">
                     <button
                       className={`color-swatch is-bw ${!selectedEntry.color ? "selected" : ""}`}

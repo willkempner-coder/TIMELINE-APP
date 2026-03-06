@@ -767,6 +767,32 @@ html, body, #root {
 .toc-delete-no:hover { background: var(--surface-raised); }
 .toc-title { font-size: 0.85rem; line-height: 1.3; font-family: "EB Garamond", Georgia, serif; }
 .toc-item small { font-size: 0.68rem; color: var(--muted); }
+.toc-delete-all-btn {
+  font-size: 0.65rem;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(200, 50, 30, 0.3);
+  background: transparent;
+  color: rgba(200, 50, 30, 0.7);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "Inter", sans-serif;
+  margin-right: 4px;
+  transition: background 100ms, color 100ms;
+}
+.toc-delete-all-btn:hover { background: rgba(200, 50, 30, 0.08); color: #c8321e; }
+.toc-delete-all-confirm {
+  padding: 10px 14px;
+  background: color-mix(in srgb, #c8321e 6%, var(--surface));
+  border-bottom: 1px solid rgba(200, 50, 30, 0.2);
+  font-size: 0.78rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toc-delete-all-actions { display: flex; gap: 6px; }
 
 /* ─── Sheet headings ─── */
 .sheet h2 {
@@ -1375,6 +1401,20 @@ html, body, #root {
   font-family: "Inter", sans-serif;
   flex-shrink: 0;
 }
+.color-reset-btn {
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border: 1px solid var(--stroke-med);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  transition: border-color 80ms, color 80ms;
+}
+.color-reset-btn:hover { border-color: var(--text); color: var(--text); }
 .color-swatch-grid {
   display: flex;
   flex-wrap: wrap;
@@ -2096,6 +2136,32 @@ html, body, #root {
   font-weight: 500;
   font-family: "Inter", sans-serif;
 }
+
+/* ─── Title + Released row in Add form ─── */
+.title-released-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.title-label-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: inherit;
+  color: inherit;
+}
+.released-label-wrap {
+  width: 74px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: inherit;
+  color: inherit;
+}
+.released-label-wrap input { width: 100%; text-align: center; }
 
 /* ─── Title autofill ─── */
 .title-search-wrap { position: relative; }
