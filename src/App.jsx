@@ -348,6 +348,16 @@ function parseYearRangeText(value) {
 }
 
 function parseYearOrRangeInput(value) {
+  const shorthand = String(value || "").trim().match(/^(\d{3,4})s$/i);
+  if (shorthand) {
+    const base = Number(shorthand[1]);
+    if (Number.isFinite(base)) {
+      // "1900s" => full century, while "1910s"/"1920s" => decade.
+      if (base % 100 === 0) return { start: base, end: base + 99 };
+      return { start: base, end: base + 9 };
+    }
+  }
+
   const range = parseYearRangeText(value);
   if (range) return range;
   const single = parseManualYearInput(value);
@@ -365,6 +375,14 @@ function formatYearOrRangeInput(start, end) {
   if (Number.isFinite(s)) return String(s);
   if (Number.isFinite(e)) return String(e);
   return "";
+}
+
+function formatHoverHeadlineTitle(title) {
+  const raw = String(title || "").trim();
+  if (!raw) return "";
+  const [head] = raw.split(":");
+  const cleanHead = String(head || "").trim();
+  return cleanHead || raw;
 }
 
 function fromGoodreadsCsv(csvText) {
@@ -430,6 +448,7 @@ async function fromLetterboxdZip(arrayBuffer) {
       const heuristic = inferSettingRangeHeuristic(title, prodYear);
       const hasHeuristicSetting = Number.isFinite(heuristic.settingStart) || Number.isFinite(heuristic.settingEnd);
       const mediaType = /season|episode/i.test(title) ? "television" : "movie";
+      const letterboxdUri = (row["Letterboxd URI"] || row.LetterboxdURI || row.URL || row.url || "").trim();
 
       return {
         id: toEntryId("lb"),
@@ -441,6 +460,7 @@ async function fromLetterboxdZip(arrayBuffer) {
         settingStart: heuristic.settingStart,
         settingEnd: heuristic.settingEnd,
         source: "letterboxd",
+        letterboxdUri,
         settingSource: hasHeuristicSetting ? "heuristic" : null,
         settingConfidence: hasHeuristicSetting ? 0.18 : null,
         settingAuto: hasHeuristicSetting,
@@ -872,6 +892,21 @@ async function fetchJson(url, timeout = 7000) {
   }
 }
 
+async function fetchText(url, timeout = 7000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function findWikidataClaimTimes(claims) {
   if (!claims) return null;
 
@@ -1074,6 +1109,73 @@ async function inferFromOpenLibrary(entry, presentYear) {
 // TMDB genre IDs that indicate historically-set or documentary content
 const TMDB_PRIORITY_GENRE_IDS = new Set([99, 36, 10752]); // Documentary, History, War
 const TMDB_PRIORITY_GENRE_NAMES = new Set(["Documentary", "History", "War"]);
+const WIKIDATA_FILM_LIKE_QIDS = new Set([
+  "Q11424", // film
+  "Q24869", // feature film
+  "Q202866", // animated film
+  "Q5398426", // television series
+  "Q506240", // television film
+  "Q21191270" // television program
+]);
+
+function normalizeLetterboxdUri(uri) {
+  const raw = String(uri || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("/")) return `https://letterboxd.com${raw}`;
+  return `https://letterboxd.com/${raw.replace(/^\/+/, "")}`;
+}
+
+function decodeHtmlEntities(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  if (typeof document === "undefined") return text;
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = text;
+  return textarea.value;
+}
+
+function cleanText(value) {
+  return decodeHtmlEntities(String(value || "").replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractLetterboxdAttributeTexts(content, attribute) {
+  const html = String(content || "");
+  if (!html) return [];
+
+  const fromAnchor = [];
+  const anchorRegex = new RegExp(`<a[^>]*href=["'][^"']*/${attribute}/[^"']*["'][^>]*>(.*?)<\\/a>`, "gi");
+  let match;
+  while ((match = anchorRegex.exec(html)) !== null) {
+    const value = cleanText(match[1]);
+    if (value) fromAnchor.push(value);
+  }
+  if (fromAnchor.length > 0) return Array.from(new Set(fromAnchor));
+
+  const fromMarkdown = [];
+  const mdRegex = new RegExp(`\\[([^\\]]+)\\]\\([^\\)]*/${attribute}/[^\\)]*\\)`, "gi");
+  while ((match = mdRegex.exec(html)) !== null) {
+    const value = cleanText(match[1]);
+    if (value) fromMarkdown.push(value);
+  }
+  return Array.from(new Set(fromMarkdown));
+}
+
+async function fetchLetterboxdPageText(uri) {
+  const normalized = normalizeLetterboxdUri(uri);
+  if (!normalized) return null;
+
+  const fromAllOrigins = await fetchText(`https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`, 6500);
+  if (typeof fromAllOrigins === "string" && fromAllOrigins.length > 100) return fromAllOrigins;
+
+  const noScheme = normalized.replace(/^https?:\/\//i, "");
+  const fromJina = await fetchText(`https://r.jina.ai/http://${noScheme}`, 7000);
+  if (typeof fromJina === "string" && fromJina.length > 100) return fromJina;
+
+  return null;
+}
 
 async function fetchTmdbFilmMeta(title, year) {
   if (!TMDB_API_KEY) return null;
@@ -1095,6 +1197,136 @@ async function fetchTmdbFilmMeta(title, year) {
   } catch {
     return null;
   }
+}
+
+function pickWikidataClaimYear(claims, property) {
+  const statements = claims?.[property];
+  if (!Array.isArray(statements)) return null;
+  for (const statement of statements) {
+    const value = statement?.mainsnak?.datavalue?.value;
+    const parsed = parseWikidataTime(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function isLikelyFilmOrTvEntity(claims) {
+  const instanceIds = collectWikidataLinkedIds(claims, "P31");
+  return instanceIds.some((id) => WIKIDATA_FILM_LIKE_QIDS.has(id));
+}
+
+async function fetchWikidataFilmMeta(title, year) {
+  try {
+    const searchParams = new URLSearchParams({
+      action: "wbsearchentities",
+      search: title,
+      language: "en",
+      format: "json",
+      origin: "*",
+      type: "item",
+      limit: "6"
+    });
+    const search = await fetchJson(`https://www.wikidata.org/w/api.php?${searchParams.toString()}`);
+    const candidates = Array.isArray(search?.search) ? search.search : [];
+    if (candidates.length === 0) return null;
+
+    const ids = candidates.map((item) => item.id).filter(Boolean);
+    const entityParams = new URLSearchParams({
+      action: "wbgetentities",
+      ids: ids.join("|"),
+      props: "claims|labels",
+      languages: "en",
+      format: "json",
+      origin: "*"
+    });
+    const entityRes = await fetchJson(`https://www.wikidata.org/w/api.php?${entityParams.toString()}`);
+    const entities = ids
+      .map((id) => entityRes?.entities?.[id])
+      .filter((entity) => entity?.claims);
+    if (entities.length === 0) return null;
+
+    const normalizedTitle = String(title || "").trim().toLowerCase();
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (const entity of entities) {
+      const claims = entity.claims || {};
+      const label = String(entity?.labels?.en?.value || "").trim().toLowerCase();
+      const publicationYear = pickWikidataClaimYear(claims, "P577");
+      let score = 0;
+
+      if (label && normalizedTitle && label === normalizedTitle) score += 4;
+      else if (label && normalizedTitle && (label.includes(normalizedTitle) || normalizedTitle.includes(label))) score += 2;
+      if (isLikelyFilmOrTvEntity(claims)) score += 3;
+      if (Number.isFinite(year) && Number.isFinite(publicationYear)) {
+        const diff = Math.abs(publicationYear - year);
+        score += Math.max(0, 2 - diff * 0.25);
+      }
+
+      if (score > bestScore) {
+        best = entity;
+        bestScore = score;
+      }
+    }
+
+    if (!best?.claims) return null;
+
+    const genreIds = collectWikidataLinkedIds(best.claims, "P136").slice(0, 8);
+    const directorIds = collectWikidataLinkedIds(best.claims, "P57").slice(0, 2);
+    const labelIds = Array.from(new Set([...genreIds, ...directorIds]));
+
+    if (labelIds.length === 0) return null;
+
+    const labelsParams = new URLSearchParams({
+      action: "wbgetentities",
+      ids: labelIds.join("|"),
+      props: "labels",
+      languages: "en",
+      format: "json",
+      origin: "*"
+    });
+    const labelsRes = await fetchJson(`https://www.wikidata.org/w/api.php?${labelsParams.toString()}`);
+
+    const genres = genreIds
+      .map((id) => labelsRes?.entities?.[id]?.labels?.en?.value)
+      .filter(Boolean);
+    const director = directorIds
+      .map((id) => labelsRes?.entities?.[id]?.labels?.en?.value)
+      .find(Boolean) || "";
+    const isPriority = genres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name));
+
+    if (!director && genres.length === 0) return null;
+    return { genres, director, isPriority, source: "wikidata" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFilmMetaWithFallback(title, year) {
+  const fromTmdb = await fetchTmdbFilmMeta(title, year);
+  if (fromTmdb) return fromTmdb;
+  return fetchWikidataFilmMeta(title, year);
+}
+
+async function fetchLetterboxdPageMeta(letterboxdUri) {
+  const pageText = await fetchLetterboxdPageText(letterboxdUri);
+  if (!pageText) return null;
+  const genres = extractLetterboxdAttributeTexts(pageText, "genre");
+  const directors = extractLetterboxdAttributeTexts(pageText, "director");
+  const director = directors[0] || "";
+  if (genres.length === 0 && !director) return null;
+  return {
+    genres,
+    director,
+    isPriority: genres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name)),
+    source: "letterboxd-page"
+  };
+}
+
+async function fetchLetterboxdFilmMetaWithFallback(entry) {
+  const fromLetterboxd = await fetchLetterboxdPageMeta(entry.letterboxdUri);
+  if (fromLetterboxd) return fromLetterboxd;
+  return fetchFilmMetaWithFallback(entry.title, entry.productionStart);
 }
 
 async function inferFromTmdb(entry, presentYear) {
@@ -1977,7 +2209,7 @@ function App() {
   const hoveredHeadline = useMemo(() => {
     if (hoveredEntryId) {
       const entry = entries.find((item) => item.id === hoveredEntryId);
-      if (entry?.title) return entry.title;
+      if (entry?.title) return formatHoverHeadlineTitle(entry.title);
     }
     if (hoveredClusterId) {
       const cluster = visibleRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
@@ -3286,16 +3518,21 @@ function App() {
       return;
     }
 
-    // For Letterboxd imports: enrich with TMDB genres + director, then sort
-    if (importSource === "letterboxd" && TMDB_API_KEY) {
-      setImportState({ phase: "analyzing", message: `Fetching film data (0/${imported.length})…` });
+    // For Letterboxd imports: enrich with TMDB first, then Wikidata fallback for genre + director.
+    if (importSource === "letterboxd") {
+      setImportState({
+        phase: "analyzing",
+        message: TMDB_API_KEY
+          ? `Fetching Letterboxd/TMDB film data (0/${imported.length})…`
+          : `Fetching Letterboxd/Wikidata film data (0/${imported.length})…`
+      });
       const CONCURRENCY = 4;
       let done = 0;
       async function enrichBatch(entries) {
         const results = new Array(entries.length);
         async function worker(i) {
           const entry = entries[i];
-          const meta = await fetchTmdbFilmMeta(entry.title, entry.productionStart);
+          const meta = await fetchLetterboxdFilmMetaWithFallback(entry);
           results[i] = meta ? { ...entry, genres: meta.genres, director: meta.director, isPriority: meta.isPriority } : entry;
           done++;
           setImportState({ phase: "analyzing", message: `Fetching film data (${done}/${entries.length})…` });
@@ -3327,7 +3564,7 @@ function App() {
       items: imported.map((entry) => ({
         ...entry,
         include: true,
-        settingRangeInput: formatYearOrRangeInput(entry.settingStart, entry.settingEnd)
+        settingRangeInput: ""
       }))
     });
     setExpandedImportGenres([]);
@@ -3428,19 +3665,22 @@ function App() {
       .map((item) => {
         const parsedSettingRange = parseYearOrRangeInput(item.settingRangeInput);
         const hasManualSetting = Boolean(parsedSettingRange);
-        const nextSettingStart = hasManualSetting ? parsedSettingRange.start : item.settingStart;
-        const nextSettingEnd = hasManualSetting ? parsedSettingRange.end : item.settingEnd;
+        const publishedStart = Number.isFinite(item.productionStart) ? item.productionStart : item.productionEnd;
+        const publishedEnd = Number.isFinite(item.productionEnd) ? item.productionEnd : publishedStart;
+        const nextSettingStart = hasManualSetting ? parsedSettingRange.start : publishedStart;
+        const nextSettingEnd = hasManualSetting ? parsedSettingRange.end : publishedEnd;
+        const hasSetting = Number.isFinite(nextSettingStart) || Number.isFinite(nextSettingEnd);
 
         return {
           ...item,
           id: toEntryId(importPreview.source === "goodreads" ? "gr" : "lb"),
           settingStart: Number.isFinite(nextSettingStart) ? Math.min(nextSettingStart, Math.floor(presentYear)) : null,
           settingEnd: Number.isFinite(nextSettingEnd) ? Math.min(nextSettingEnd, Math.floor(presentYear)) : null,
-          settingSource: hasManualSetting ? "manual" : item.settingSource,
-          settingConfidence: hasManualSetting ? null : item.settingConfidence,
-          settingAuto: hasManualSetting ? false : item.settingAuto,
-          settingUserLocked: hasManualSetting ? true : item.settingUserLocked,
-          inferenceStatus: hasManualSetting ? "done" : item.inferenceStatus
+          settingSource: hasManualSetting ? "manual" : (hasSetting ? "production-fallback" : null),
+          settingConfidence: null,
+          settingAuto: false,
+          settingUserLocked: hasSetting,
+          inferenceStatus: hasSetting ? "done" : "idle"
         };
       });
 
@@ -4210,6 +4450,11 @@ function App() {
                         <div className="import-preview-title-row">
                           <span className="import-preview-dot" style={{ background: item.color || colorForMediaType(item.mediaType) }} />
                           <strong>{item.title}</strong>
+                          {Number.isFinite(item.productionStart) || Number.isFinite(item.productionEnd) ? (
+                            <span className="import-preview-year-pill">
+                              {formatYearOrRangeInput(item.productionStart, item.productionEnd)}
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             className="import-preview-remove"
@@ -4222,7 +4467,6 @@ function App() {
                         <small>
                           {getType(item.mediaType).label}
                           {item.director ? ` · ${item.director}` : (item.creator ? ` · ${item.creator}` : "")}
-                          {item.productionStart ? ` · ${item.productionStart}` : ""}
                         </small>
                         {item.genres?.length ? (
                           <div className="import-preview-genres">
@@ -4237,7 +4481,7 @@ function App() {
                             <input
                               value={item.settingRangeInput ?? ""}
                               onChange={(event) => updateImportPreviewItem(item.tempId, { settingRangeInput: event.target.value })}
-                              placeholder="e.g. 1968 or 1968-1983"
+                              placeholder="leave blank to use Year Published"
                             />
                           </label>
                         </div>
@@ -4291,6 +4535,7 @@ function App() {
                         <div className="import-section-header">
                           <span>Read ({readItems.length})</span>
                           <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: true } : i) } : cur)} className="import-section-btn">Select all</button>
+                          <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: false } : i) } : cur)} className="import-section-btn">Deselect all</button>
                         </div>
                         {readItems.map(renderPreviewItem)}
                       </>
@@ -4301,6 +4546,7 @@ function App() {
                           <span>To-Read ({toReadItems.length})</span>
                           <small className="import-section-hint">Will be marked as to-do</small>
                           <button type="button" onClick={() => setImportPreviewIncludeShelf("to-read", true)} className="import-section-btn">Select all</button>
+                          <button type="button" onClick={() => setImportPreviewIncludeShelf("to-read", false)} className="import-section-btn">Deselect all</button>
                         </div>
                         {toReadItems.map(renderPreviewItem)}
                       </>
