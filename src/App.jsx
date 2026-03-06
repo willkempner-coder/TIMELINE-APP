@@ -2596,8 +2596,16 @@ function App() {
       const entry = entries.find((item) => item.id === hoveredEntryId);
       if (entry) {
         const typeLabel = getType(entry.mediaType).label;
-        const year = entry.settingStart ?? entry.settingEnd ?? entry.productionStart ?? entry.productionEnd;
-        const yearPart = Number.isFinite(year) ? ` · ${Math.round(year)}` : "";
+        const hoveredMarker = hoveredRangeMarkerId
+          ? markers.find((marker) => marker.id === hoveredRangeMarkerId && marker.entryId === entry.id)
+          : null;
+        let yearPart = "";
+        if (hoveredMarker && Number.isFinite(hoveredMarker.rangeStart) && Number.isFinite(hoveredMarker.rangeEnd)) {
+          yearPart = ` · ${formatYearOrRangeInput(hoveredMarker.rangeStart, hoveredMarker.rangeEnd)}`;
+        } else {
+          const year = entry.settingStart ?? entry.settingEnd ?? entry.productionStart ?? entry.productionEnd;
+          yearPart = Number.isFinite(year) ? ` · ${Math.round(year)}` : "";
+        }
         const creatorPart = entry.creator ? ` · ${entry.creator}` : "";
         return `${typeLabel}${creatorPart}${yearPart}`;
       }
@@ -2607,7 +2615,7 @@ function App() {
       if (cluster) return formatClusterTypeBreakdown(cluster);
     }
     return "";
-  }, [entries, hoveredClusterId, hoveredEntryId, visibleRenderItems]);
+  }, [entries, hoveredClusterId, hoveredEntryId, hoveredRangeMarkerId, markers, visibleRenderItems]);
 
   const baseRenderedUnits = useMemo(() => countRenderUnits(visibleRenderItems, timelineState.span), [timelineState.span, visibleRenderItems]);
 
@@ -5884,7 +5892,6 @@ function App() {
                       event
                     )
                   }
-                  title={entry.title}
                 />
 
                 {marker.rangeEnd > marker.rangeStart ? (
@@ -5913,7 +5920,6 @@ function App() {
                         event
                       )
                     }
-                    title={`${entry.title} end`}
                   />
                 ) : null}
 
@@ -5968,7 +5974,6 @@ function App() {
                             onClick={() => setExpandedBranchType((current) => (current === group.mediaType ? null : group.mediaType))}
                             onMouseEnter={() => setHoveredBranchLabel(formatTypeClusterLabel(group, expandedCluster))}
                             onMouseLeave={() => setHoveredBranchLabel("")}
-                            title={formatTypeClusterLabel(group, expandedCluster)}
                           >
                             {group.count}
                           </button>
@@ -5994,7 +5999,6 @@ function App() {
                               event
                             )
                           }
-                          title={entry.title}
                         />
                       );
                     })}
@@ -6022,7 +6026,6 @@ function App() {
                               event
                             )
                           }
-                          title={entry.title}
                         />
                       );
                     })}
@@ -6049,7 +6052,6 @@ function App() {
                               event
                             )
                           }
-                          title={entry.title}
                         />
                       );
                     })}
