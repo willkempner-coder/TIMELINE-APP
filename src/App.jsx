@@ -1112,7 +1112,6 @@ function App() {
   const [rangeDraft, setRangeDraft] = useState({ raw: "", eraId: "" });
   const [rangeError, setRangeError] = useState("");
   const [lockedRange, setLockedRange] = useState(null);
-  const [tocFilter, setTocFilter] = useState(MODE_PRODUCTION);
   const [titleSuggestions, setTitleSuggestions] = useState([]);
   const [titleSearchLoading, setTitleSearchLoading] = useState(false);
   const titleSearchTimerRef = useRef(null);
@@ -3187,7 +3186,6 @@ function App() {
     // Ensure newly imported items are visible instead of hidden by prior filters/lane selection.
     setQuery("");
     setSoloType(null);
-    if (mode === MODE_SETTING) setMode(MODE_PRODUCTION);
 
     setImportPreview(null);
     setImportState({ phase: "deploying", message: `Deploying ${prepared.length} nodes...` });
@@ -3402,6 +3400,19 @@ function App() {
 
       <div className="corner-buttons top-right">
         <button
+          className={`glass-btn ${showSettings ? "active" : ""}`}
+          type="button"
+          onClick={() => toggleMainMenu("settings")}
+          title="Settings"
+        >
+          <svg viewBox="0 0 32 32" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
+            <circle cx="13" cy="9" r="2.8" />
+            <circle cx="17" cy="16" r="2.8" />
+            <circle cx="13" cy="23" r="2.8" />
+          </svg>
+        </button>
+        <button
           className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
           type="button"
           onClick={() => setViewMode(v => v === "timeline" ? "scatter" : "timeline")}
@@ -3436,13 +3447,15 @@ function App() {
               <button
                 key={type.id}
                 type="button"
-                className={`map-key-icon-btn ${soloType === type.id ? "active" : ""}`}
+                className={`map-key-icon-btn map-key-type-btn ${soloType === type.id ? "active" : ""}`}
                 onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
                 title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+                style={{ "--type-color": colorForMediaType(type.id) }}
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d={MEDIA_ICON_PATHS[type.id]} />
                 </svg>
+                <span className="map-key-type-dot" style={{ background: colorForMediaType(type.id) }} />
               </button>
             ))}
             <button
@@ -3458,14 +3471,6 @@ function App() {
               </svg>
             </button>
 
-            <button type="button" className="map-key-icon-btn" onClick={() => toggleMainMenu("settings")} title="Timeline options">
-              <svg viewBox="0 0 32 32" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M5 9h7m3 0h12M5 16h12m3 0h7M5 23h7m3 0h12" />
-                <circle cx="13" cy="9" r="2.8" />
-                <circle cx="17" cy="16" r="2.8" />
-                <circle cx="13" cy="23" r="2.8" />
-              </svg>
-            </button>
             <button type="button" className={`map-key-icon-btn ${showEras ? "active" : ""}`} onClick={() => setShowEras((v) => !v)} title="Era zones">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 7h18M3 12h18M3 17h18" />
@@ -3494,13 +3499,15 @@ function App() {
                 <button
                   key={`extra-${type.id}`}
                   type="button"
-                  className={`map-key-icon-btn ${soloType === type.id ? "active" : ""}`}
+                  className={`map-key-icon-btn map-key-type-btn ${soloType === type.id ? "active" : ""}`}
                   onClick={() => setSoloType((current) => (current === type.id ? null : type.id))}
                   title={soloType === type.id ? "Show all media" : `Filter ${type.label}`}
+                  style={{ "--type-color": colorForMediaType(type.id) }}
                 >
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d={MEDIA_ICON_PATHS[type.id]} />
                   </svg>
+                  <span className="map-key-type-dot" style={{ background: colorForMediaType(type.id) }} />
                 </button>
               ))}
             </div>
@@ -3649,18 +3656,6 @@ function App() {
                 </button>
               ) : null}
             </div>
-            <div className="toc-mode-filter">
-              {[MODE_PRODUCTION, MODE_SETTING].map(m => (
-                <button
-                  key={m}
-                  className={tocFilter === m ? "active" : ""}
-                  type="button"
-                  onClick={() => setTocFilter(m)}
-                >
-                  {m === MODE_SETTING ? "Setting" : "Production"}
-                </button>
-              ))}
-            </div>
             {(() => {
               const allTags = new Set();
               for (const entry of tocEntries) {
@@ -3694,12 +3689,8 @@ function App() {
             })()}
             <div className="toc-list">
               {(() => {
-                // Group by decade based on tocFilter
-                const getYear = (entry) => {
-                  if (tocFilter === MODE_SETTING) return entry.settingStart ?? entry.productionStart;
-                  if (tocFilter === MODE_PRODUCTION) return entry.productionStart ?? entry.settingStart;
-                  return entry.settingStart ?? entry.productionStart;
-                };
+                // Group by decade based on setting date
+                const getYear = (entry) => entry.settingStart ?? entry.settingEnd ?? entry.productionStart;
                 const grouped = new Map();
                 for (const entry of tocEntries) {
                   if (tocTypeFilter !== null && entry.mediaType !== tocTypeFilter) continue;
@@ -3720,7 +3711,7 @@ function App() {
                     {group.entries.map(entry => (
                       <button key={entry.id} type="button" className="toc-item" onClick={() => onTocItemClick(entry)}>
                         <span className="toc-title">{entry.title}</span>
-                        <small>{getType(entry.mediaType).label} · {entry.productionStart ?? "?"}{entry.settingStart && entry.settingStart !== entry.productionStart ? ` · set ${entry.settingStart}` : ""}</small>
+                        <small>{getType(entry.mediaType).label}{entry.settingStart ? ` · ${entry.settingStart}` : (entry.settingEnd ? ` · ${entry.settingEnd}` : "")}</small>
                       </button>
                     ))}
                   </div>
@@ -4033,30 +4024,6 @@ function App() {
                 ×
               </button>
             </div>
-            <div className="mode-row">
-            <button className={mode === MODE_SETTING ? "active" : ""} type="button" onClick={() => {
-              setMode(MODE_SETTING);
-              const c = findDensestYear(filteredEntries, MODE_SETTING);
-              if (c != null) animateTimelineToYear(c, Math.min(timelineState.span, 100));
-            }}>
-              SETTING
-            </button>
-            <button className={mode === MODE_PRODUCTION ? "active" : ""} type="button" onClick={() => {
-              setMode(MODE_PRODUCTION);
-              const c = findDensestYear(filteredEntries, MODE_PRODUCTION);
-              if (c != null) animateTimelineToYear(c, Math.min(timelineState.span, 100));
-            }}>
-              PRODUCTION
-            </button>
-            <button className={mode === MODE_BOTH ? "active" : ""} type="button" onClick={() => {
-              setMode(MODE_BOTH);
-              const c = findDensestYear(filteredEntries, MODE_PRODUCTION);
-              if (c != null) animateTimelineToYear(c, Math.min(timelineState.span, 100));
-            }}>
-              BOTH
-            </button>
-          </div>
-
           <h3>Media Filters</h3>
           <div className="type-grid">
             {MEDIA_TYPES.map((type) => (
