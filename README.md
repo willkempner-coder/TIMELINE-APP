@@ -64,3 +64,29 @@ git push -u origin main
 - Framework preset: `Vite`
 - Build command: `npm run build`
 - Output directory: `dist`
+
+## Server-side Letterboxd batch enricher (recommended)
+
+For large Letterboxd imports, use the included serverless API:
+
+- Endpoint file: `api/enrich-letterboxd.js`
+- Route: `/api/enrich-letterboxd`
+
+Why:
+
+- Faster + more reliable than browser-only scraping for 1k+ items
+- Avoids many CORS/proxy timeout issues
+- Uses Letterboxd page extraction first, then Wikidata, then TMDB (if key exists)
+
+### Setup
+
+1. Deploy this repo as a Vercel project (same repo is fine).
+2. Copy the deployed API URL:
+   - `https://YOUR-VERCEL-DOMAIN/api/enrich-letterboxd`
+3. In your frontend environment, set:
+   - `VITE_BATCH_ENRICHER_URL=https://YOUR-VERCEL-DOMAIN/api/enrich-letterboxd`
+4. Optional for best metadata:
+   - Add Vercel env var `TMDB_API_KEY=...`
+5. Rebuild/redeploy your frontend (GitHub Pages deploy) so the env var is baked in.
+
+If `VITE_BATCH_ENRICHER_URL` is not set, the app falls back to client-side enrichment.

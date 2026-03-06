@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/enrich-letterboxd.js": {
+      "runtime": "@vercel/node"
+    }
+  }
+}

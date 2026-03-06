@@ -12,6 +12,7 @@ const LEGACY_STORAGE_KEYS = [
   "timeline-media-log-v1"
 ];
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "";
+const BATCH_ENRICHER_URL = String(import.meta.env.VITE_BATCH_ENRICHER_URL || "").trim();
 const USE_SEED_DATA = String(import.meta.env.VITE_USE_SEED_DATA ?? "true").toLowerCase() !== "false";
 
 const MEDIA_TYPES = [
@@ -385,6 +386,18 @@ function formatHoverHeadlineTitle(title) {
   return cleanHead || raw;
 }
 
+function buildImportDuplicateKey(entry) {
+  const title = normalizeSearchText(entry?.title || "");
+  const mediaType = String(entry?.mediaType || "").trim().toLowerCase();
+  const year = Number.isFinite(entry?.productionStart)
+    ? Math.round(entry.productionStart)
+    : Number.isFinite(entry?.productionEnd)
+    ? Math.round(entry.productionEnd)
+    : "";
+  const creator = normalizeSearchText(entry?.creator || entry?.director || "");
+  return `${title}|${year}|${mediaType}|${creator}`;
+}
+
 function fromGoodreadsCsv(csvText) {
   const rows = parseRows(csvText);
 
@@ -745,7 +758,12 @@ function formatClusterLabel(item) {
     const representativeYear = years.length > 0 ? (Math.min(...years) + Math.max(...years)) / 2 : item.year;
     const period = getCenturyPeriod(representativeYear);
     const centuryLabel = getOrdinalCentury(representativeYear);
-    return centuryLabel ? `${period} ${centuryLabel}` : `${size} items`;
+    const minY = years.length > 0 ? Math.min(...years) : representativeYear;
+    const maxY = years.length > 0 ? Math.max(...years) : representativeYear;
+    const rangeLabel = Number.isFinite(minY) && Number.isFinite(maxY)
+      ? ` (${formatTimelineYear(minY)}-${formatTimelineYear(maxY)})`
+      : "";
+    return centuryLabel ? `${period} ${centuryLabel}${rangeLabel}` : `${size} items`;
   }
 
   if (resolution === "decade") {
@@ -756,7 +774,10 @@ function formatClusterLabel(item) {
     const avgY = (minY + maxY) / 2;
     const period = getCenturyPeriod(avgY);
     const centuryLabel = getOrdinalCentury(avgY);
-    return centuryLabel ? `${period} ${centuryLabel}` : `${Math.floor(item.year / 10) * 10}s`;
+    const rangeLabel = Number.isFinite(minY) && Number.isFinite(maxY)
+      ? ` (${formatTimelineYear(minY)}-${formatTimelineYear(maxY)})`
+      : "";
+    return centuryLabel ? `${period} ${centuryLabel}${rangeLabel}` : `${Math.floor(item.year / 10) * 10}s`;
   }
 
   // year resolution
@@ -900,6 +921,49 @@ async function fetchText(url, timeout = 3500) {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return null;
     return await response.text();
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function fetchBatchLetterboxdMeta(items) {
+  if (!BATCH_ENRICHER_URL || !Array.isArray(items) || items.length === 0) return null;
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const response = await fetch(BATCH_ENRICHER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: items.map((entry, index) => ({
+          index,
+          title: entry.title,
+          productionStart: entry.productionStart,
+          letterboxdUri: entry.letterboxdUri || ""
+        }))
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.items) ? payload.items : [];
+    const byIndex = new Map();
+
+    for (const row of rows) {
+      const index = Number(row?.index);
+      if (!Number.isFinite(index)) continue;
+      const genres = normalizeGenreList(row?.genres);
+      const director = String(row?.director || "").trim();
+      const source = String(row?.source || "").trim();
+      const isPriority = genres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name));
+      byIndex.set(index, { genres, director, source, isPriority });
+    }
+    return byIndex;
   } catch {
     return null;
   } finally {
@@ -1118,6 +1182,81 @@ const WIKIDATA_FILM_LIKE_QIDS = new Set([
   "Q21191270" // television program
 ]);
 
+const GENRE_CANONICAL_ALIASES = new Map([
+  ["documentary film", "Documentary"],
+  ["doc film", "Documentary"],
+  ["documentaries", "Documentary"],
+  ["biographical film", "Biography"],
+  ["biography film", "Biography"],
+  ["biographical drama", "Biography"],
+  ["biopic", "Biography"],
+  ["biopics", "Biography"],
+  ["history film", "History"],
+  ["historical film", "History"],
+  ["historic film", "History"],
+  ["war film", "War"],
+  ["war movie", "War"],
+  ["science fiction", "Sci-Fi"],
+  ["sci fi", "Sci-Fi"],
+  ["sci-fi", "Sci-Fi"]
+]);
+
+function canonicalizeGenreName(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const lowered = raw.toLowerCase();
+  const direct = GENRE_CANONICAL_ALIASES.get(lowered);
+  if (direct) return direct;
+  return raw
+    .split(/\s+/)
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : part))
+    .join(" ");
+}
+
+function normalizeGenreList(genres) {
+  const output = [];
+  const seen = new Set();
+  for (const genre of Array.isArray(genres) ? genres : []) {
+    const canonical = canonicalizeGenreName(genre);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    output.push(canonical);
+  }
+  return output;
+}
+
+function inferLocalGenres(entry) {
+  const text = normalizeSearchText([
+    entry?.title || "",
+    entry?.creator || "",
+    entry?.director || ""
+  ].join(" "));
+
+  const guessed = [];
+  const add = (name) => {
+    if (!name || guessed.includes(name)) return;
+    guessed.push(name);
+  };
+
+  if (/\b(documentary|docuseries|docu)\b/.test(text)) add("Documentary");
+  if (/\b(world war|wwii|ww2|wwi|ww1|war|battle|military|holocaust|nazi|vietnam|iraq|afghan)\b/.test(text)) {
+    add("War");
+    add("History");
+  }
+  if (/\b(history|historical|interwar|cold war|ancient|medieval|victorian|revolution)\b/.test(text)) add("History");
+  if (/\b(biography|biographical|biopic|life of|story of|memoir)\b/.test(text)) add("Biography");
+  if (/\b(jfk|john f kennedy|kennedy|lincoln|napoleon|churchill|mandela|malcolm x|mlk|martin luther king)\b/.test(text)) {
+    add("History");
+    add("Biography");
+  }
+  if (/\b(president|presidency|assassination|civil rights|american history)\b/.test(text)) add("History");
+
+  if (guessed.length === 0 && Number.isFinite(entry?.productionStart) && entry.productionStart < 1950) add("History");
+  if (guessed.length === 0) add("Other");
+
+  return guessed;
+}
+
 function normalizeLetterboxdUri(uri) {
   const raw = String(uri || "").trim();
   if (!raw) return "";
@@ -1193,7 +1332,7 @@ async function fetchTmdbFilmMeta(title, year) {
     const detail = await fetchJson(`https://api.themoviedb.org/3/movie/${result.id}?${detailParams.toString()}`);
     if (!detail) return null;
 
-    const genres = (detail.genres || []).map(g => g.name);
+    const genres = normalizeGenreList((detail.genres || []).map(g => g.name));
     const director = detail.credits?.crew?.find(c => c.job === "Director")?.name || "";
     const isPriority = (detail.genres || []).some(g => TMDB_PRIORITY_GENRE_IDS.has(g.id));
     return { genres, director, isPriority, tmdbId: result.id };
@@ -1290,9 +1429,9 @@ async function fetchWikidataFilmMeta(title, year) {
     });
     const labelsRes = await fetchJson(`https://www.wikidata.org/w/api.php?${labelsParams.toString()}`);
 
-    const genres = genreIds
+    const genres = normalizeGenreList(genreIds
       .map((id) => labelsRes?.entities?.[id]?.labels?.en?.value)
-      .filter(Boolean);
+      .filter(Boolean));
     const director = directorIds
       .map((id) => labelsRes?.entities?.[id]?.labels?.en?.value)
       .find(Boolean) || "";
@@ -1315,7 +1454,7 @@ async function fetchLetterboxdPageMeta(letterboxdUri, options = {}) {
   if (!letterboxdUri) return null;
   const pageText = await fetchLetterboxdPageText(letterboxdUri, options);
   if (!pageText) return null;
-  const genres = extractLetterboxdAttributeTexts(pageText, "genre");
+  const genres = normalizeGenreList(extractLetterboxdAttributeTexts(pageText, "genre"));
   const directors = extractLetterboxdAttributeTexts(pageText, "director");
   const director = directors[0] || "";
   if (genres.length === 0 && !director) return null;
@@ -1435,6 +1574,7 @@ function App() {
   const [showAllMapTypes, setShowAllMapTypes] = useState(false);
   const [tocTagFilter, setTocTagFilter] = useState(null);
   const [tocScrollRatio, setTocScrollRatio] = useState(0);
+  const [tocScrubHintVisible, setTocScrubHintVisible] = useState(false);
   const [hoveredEraId, setHoveredEraId] = useState(null);
   const [hoveredTimelineLabel, setHoveredTimelineLabel] = useState("");
   const [hoveredBranchLabel, setHoveredBranchLabel] = useState("");
@@ -1450,6 +1590,7 @@ function App() {
   const [flight, setFlight] = useState(null);
   const [importState, setImportState] = useState({ phase: "idle", message: "" });
   const [importPreview, setImportPreview] = useState(null);
+  const [importPreviewQuery, setImportPreviewQuery] = useState("");
   const [expandedImportGenres, setExpandedImportGenres] = useState([]);
 
   const [inferenceUi, setInferenceUi] = useState({
@@ -1540,6 +1681,7 @@ function App() {
   const tocListRef = useRef(null);
   const tocRailRef = useRef(null);
   const tocDragRef = useRef({ active: false });
+  const tocScrubHintTimerRef = useRef(null);
   const addSheetRef = useRef(null);
   const settingsSheetRef = useRef(null);
   const importPreviewRef = useRef(null);
@@ -1816,6 +1958,15 @@ function App() {
       }));
   }, [tocGroups]);
 
+  const tocScrubYearLabel = useMemo(() => {
+    if (tocGroups.length === 0) return "";
+    const index = Math.round(clamp(tocScrollRatio, 0, 1) * Math.max(0, tocGroups.length - 1));
+    const group = tocGroups[index];
+    if (!group) return "";
+    if (Number.isFinite(group.decade)) return `${group.decade}s`;
+    return "Unknown";
+  }, [tocGroups, tocScrollRatio]);
+
   const viewEnd = clamp(timelineState.end, -100000, 100000);
   const viewStart = viewEnd - timelineState.span;
   const visibleRangeLabel = useMemo(
@@ -1971,6 +2122,11 @@ function App() {
     return importPreview.items.reduce((count, item) => count + (item.include ? 1 : 0), 0);
   }, [importPreview]);
 
+  const importPreviewDuplicateCount = useMemo(() => {
+    if (!importPreview) return 0;
+    return importPreview.items.reduce((count, item) => count + (item.duplicateStatus ? 1 : 0), 0);
+  }, [importPreview]);
+
   const importProgressHud = useMemo(() => {
     if (importState.phase !== "analyzing" && importState.phase !== "deploying") return null;
     const message = String(importState.message || (importState.phase === "deploying" ? "Importing…" : "Analyzing…"));
@@ -1984,15 +2140,15 @@ function App() {
 
   const letterboxdGenreGroups = useMemo(() => {
     if (!importPreview || importPreview.source !== "letterboxd") return [];
-    const priority = ["Documentary", "History"];
+    const priority = ["Documentary", "History", "War"];
     const grouped = new Map();
 
     const primaryGenreForItem = (item) => {
-      const genres = Array.isArray(item.genres) ? item.genres.filter(Boolean) : [];
+      const genres = normalizeGenreList(item.genres);
       for (const name of priority) {
         if (genres.includes(name)) return name;
       }
-      return genres[0] || "Uncategorized";
+      return genres[0] || "Other";
     };
 
     for (const item of importPreview.items) {
@@ -2011,8 +2167,8 @@ function App() {
       const ai = priority.indexOf(a.genre);
       const bi = priority.indexOf(b.genre);
       if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      if (a.genre === "Uncategorized") return 1;
-      if (b.genre === "Uncategorized") return -1;
+      if (a.genre === "Other") return 1;
+      if (b.genre === "Other") return -1;
       return a.genre.localeCompare(b.genre);
     });
 
@@ -3580,45 +3736,74 @@ function App() {
 
     // For Letterboxd imports: enrich with TMDB first, then Wikidata fallback for genre + director.
     if (importSource === "letterboxd") {
-      const isLargeImport = imported.length >= 500;
-      const metaCache = new Map();
-      setImportState({
-        phase: "analyzing",
-        message: TMDB_API_KEY
-          ? `Fetching Letterboxd/TMDB film data (0/${imported.length})…`
-          : `Fetching Letterboxd/Wikidata film data (0/${imported.length})…`
-      });
-      const CONCURRENCY = isLargeImport ? 16 : 10;
-      let done = 0;
-      async function enrichBatch(entries) {
-        const results = new Array(entries.length);
-        async function worker(i) {
-          const entry = entries[i];
-          const cacheKey = [
-            normalizeSearchText(entry.title || ""),
-            Number.isFinite(entry.productionStart) ? entry.productionStart : "",
-            normalizeLetterboxdUri(entry.letterboxdUri || "")
-          ].join("|");
-          let meta = metaCache.get(cacheKey);
-          if (meta === undefined) {
-            meta = await fetchLetterboxdFilmMetaWithFallback(entry, { fastMode: isLargeImport });
-            metaCache.set(cacheKey, meta || null);
-          }
-          results[i] = meta ? { ...entry, genres: meta.genres, director: meta.director, isPriority: meta.isPriority } : entry;
-          done++;
-          setImportState({ phase: "analyzing", message: `Fetching film data (${done}/${entries.length})…` });
+      let usedServerBatch = false;
+      if (BATCH_ENRICHER_URL) {
+        setImportState({ phase: "analyzing", message: `Server enrichment (0/${imported.length})…` });
+        const batchMetaByIndex = await fetchBatchLetterboxdMeta(imported);
+        if (batchMetaByIndex && batchMetaByIndex.size > 0) {
+          imported = imported.map((entry, index) => {
+            const meta = batchMetaByIndex.get(index);
+            const fallbackGenres = inferLocalGenres(entry);
+            const nextGenres = normalizeGenreList(meta?.genres?.length ? meta.genres : fallbackGenres);
+            return {
+              ...entry,
+              genres: nextGenres,
+              director: meta?.director || entry.creator || "",
+              isPriority: Boolean(meta?.isPriority) || nextGenres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name))
+            };
+          });
+          usedServerBatch = true;
         }
-        const queue = entries.map((_, i) => i);
-        async function runWorkers() {
-          while (queue.length > 0) {
-            const batch = queue.splice(0, CONCURRENCY);
-            await Promise.all(batch.map(worker));
-          }
-        }
-        await runWorkers();
-        return results;
       }
-      imported = await enrichBatch(imported);
+
+      if (!usedServerBatch) {
+        const isLargeImport = imported.length >= 500;
+        const metaCache = new Map();
+        setImportState({
+          phase: "analyzing",
+          message: TMDB_API_KEY
+            ? `Fetching Letterboxd/TMDB film data (0/${imported.length})…`
+            : `Fetching Letterboxd/Wikidata film data (0/${imported.length})…`
+        });
+        const CONCURRENCY = isLargeImport ? 16 : 10;
+        let done = 0;
+        async function enrichBatch(entries) {
+          const results = new Array(entries.length);
+          async function worker(i) {
+            const entry = entries[i];
+            const cacheKey = [
+              normalizeSearchText(entry.title || ""),
+              Number.isFinite(entry.productionStart) ? entry.productionStart : "",
+              normalizeLetterboxdUri(entry.letterboxdUri || "")
+            ].join("|");
+            let meta = metaCache.get(cacheKey);
+            if (meta === undefined) {
+              meta = await fetchLetterboxdFilmMetaWithFallback(entry, { fastMode: isLargeImport });
+              metaCache.set(cacheKey, meta || null);
+            }
+            const fallbackGenres = inferLocalGenres(entry);
+            const nextGenres = normalizeGenreList(meta?.genres?.length ? meta.genres : fallbackGenres);
+            results[i] = {
+              ...entry,
+              genres: nextGenres,
+              director: meta?.director || entry.creator || "",
+              isPriority: Boolean(meta?.isPriority) || nextGenres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name))
+            };
+            done++;
+            setImportState({ phase: "analyzing", message: `Fetching film data (${done}/${entries.length})…` });
+          }
+          const queue = entries.map((_, i) => i);
+          async function runWorkers() {
+            while (queue.length > 0) {
+              const batch = queue.splice(0, CONCURRENCY);
+              await Promise.all(batch.map(worker));
+            }
+          }
+          await runWorkers();
+          return results;
+        }
+        imported = await enrichBatch(imported);
+      }
 
       // Sort: Documentary/History/War first, then alphabetically
       imported.sort((a, b) => {
@@ -3629,15 +3814,27 @@ function App() {
       });
     }
 
+    const existingKeys = new Set(entriesRef.current.map(buildImportDuplicateKey));
+    const incomingSeen = new Set();
+
     setImportPreview({
       source: importSource,
       fileName: selectedFile?.name || "",
-      items: imported.map((entry) => ({
-        ...entry,
-        include: true,
-        settingRangeInput: ""
-      }))
+      items: imported.map((entry) => {
+        const key = buildImportDuplicateKey(entry);
+        const isExistingDuplicate = existingKeys.has(key);
+        const isIncomingDuplicate = incomingSeen.has(key);
+        incomingSeen.add(key);
+        const duplicateStatus = isExistingDuplicate ? "existing" : isIncomingDuplicate ? "batch" : null;
+        return {
+          ...entry,
+          include: duplicateStatus ? false : true,
+          duplicateStatus,
+          settingRangeInput: ""
+        };
+      })
     });
+    setImportPreviewQuery("");
     setExpandedImportGenres([]);
     setImportState({ phase: "idle", message: "" });
   }
@@ -3662,6 +3859,7 @@ function App() {
   function closeImportPreview() {
     setImportPreview(null);
     setExpandedImportGenres([]);
+    setImportPreviewQuery("");
   }
 
   function removeImportPreviewItem(tempId) {
@@ -3679,7 +3877,10 @@ function App() {
       if (!current) return current;
       return {
         ...current,
-        items: current.items.map((item) => ({ ...item, include }))
+        items: current.items.map((item) => ({
+          ...item,
+          include: include ? (item.duplicateStatus ? false : true) : false
+        }))
       };
     });
   }
@@ -3689,7 +3890,11 @@ function App() {
       if (!current) return current;
       return {
         ...current,
-        items: current.items.map((item) => (item.shelf === shelf ? { ...item, include } : item))
+        items: current.items.map((item) =>
+          item.shelf === shelf
+            ? { ...item, include: include ? (item.duplicateStatus ? false : true) : false }
+            : item
+        )
       };
     });
   }
@@ -3697,17 +3902,21 @@ function App() {
   function setImportPreviewIncludeGenre(genre, include) {
     setImportPreview((current) => {
       if (!current || current.source !== "letterboxd") return current;
-      const priority = ["Documentary", "History"];
+      const priority = ["Documentary", "History", "War"];
       const primaryGenreForItem = (item) => {
-        const genres = Array.isArray(item.genres) ? item.genres.filter(Boolean) : [];
+        const genres = normalizeGenreList(item.genres);
         for (const name of priority) {
           if (genres.includes(name)) return name;
         }
-        return genres[0] || "Uncategorized";
+        return genres[0] || "Other";
       };
       return {
         ...current,
-        items: current.items.map((item) => (primaryGenreForItem(item) === genre ? { ...item, include } : item))
+        items: current.items.map((item) =>
+          primaryGenreForItem(item) === genre
+            ? { ...item, include: include ? (item.duplicateStatus ? false : true) : false }
+            : item
+        )
       };
     });
   }
@@ -3970,11 +4179,18 @@ function App() {
     setShowRangePanel(false);
   }
 
+  function showTocScrubHint(duration = 900) {
+    setTocScrubHintVisible(true);
+    if (tocScrubHintTimerRef.current) window.clearTimeout(tocScrubHintTimerRef.current);
+    tocScrubHintTimerRef.current = window.setTimeout(() => setTocScrubHintVisible(false), duration);
+  }
+
   function updateTocScrollRatio() {
     const list = tocListRef.current;
     if (!list) return;
     const maxScroll = Math.max(1, list.scrollHeight - list.clientHeight);
     setTocScrollRatio(clamp(list.scrollTop / maxScroll, 0, 1));
+    showTocScrubHint();
   }
 
   function scrubTocToClientY(clientY) {
@@ -3985,6 +4201,7 @@ function App() {
     const ratio = clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1);
     const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
     list.scrollTop = ratio * maxScroll;
+    showTocScrubHint(1100);
   }
 
   function onTocRailPointerMove(event) {
@@ -4012,6 +4229,7 @@ function App() {
     if (!list) return;
     const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
     list.scrollTop = clamp(ratio, 0, 1) * maxScroll;
+    showTocScrubHint(1100);
   }
 
   useEffect(() => {
@@ -4024,6 +4242,7 @@ function App() {
     return () => {
       window.removeEventListener("pointermove", onTocRailPointerMove);
       window.removeEventListener("pointerup", onTocRailPointerUp);
+      if (tocScrubHintTimerRef.current) window.clearTimeout(tocScrubHintTimerRef.current);
     };
   }, []);
 
@@ -4343,6 +4562,9 @@ function App() {
                     aria-label={`Jump to ${stop.label}`}
                   />
                 ))}
+                <div className={`toc-scrub-thumb-label ${tocScrubHintVisible ? "visible" : ""}`} style={{ top: `${tocScrollRatio * 100}%` }}>
+                  {tocScrubYearLabel}
+                </div>
                 <div className="toc-scrub-thumb" style={{ top: `${tocScrollRatio * 100}%` }} />
               </div>
               <div ref={tocListRef} className="toc-list" onScroll={updateTocScrollRatio}>
@@ -4565,17 +4787,39 @@ function App() {
             </div>
             <p className="hint">
               {importPreview.fileName || "Import file"} · {importPreview.source === "goodreads" ? "Goodreads" : "Letterboxd"} · {importPreviewSelectedCount}/{importPreview.items.length} selected
+              {importPreviewDuplicateCount > 0 ? ` · ${importPreviewDuplicateCount} possible duplicates auto-deselected` : ""}
             </p>
             <div className="import-preview-toolbar">
               <button type="button" onClick={() => setImportPreviewIncludeAll(true)}>Select all</button>
               <button type="button" onClick={() => setImportPreviewIncludeAll(false)}>Deselect all</button>
             </div>
+            <div className="import-preview-search-row">
+              <input
+                value={importPreviewQuery}
+                onChange={(event) => setImportPreviewQuery(event.target.value)}
+                placeholder="Search imported items (title, creator, director, genre, year)…"
+              />
+            </div>
 
             <div className="import-preview-list">
               {(() => {
                 const isGoodreads = importPreview.source === "goodreads";
-                const readItems = isGoodreads ? importPreview.items.filter(i => i.shelf !== "to-read") : importPreview.items;
-                const toReadItems = isGoodreads ? importPreview.items.filter(i => i.shelf === "to-read") : [];
+                const searchNeedle = normalizeSearchText(importPreviewQuery);
+                const matchesImportPreviewSearch = (item) => {
+                  if (!searchNeedle) return true;
+                  const years = formatYearOrRangeInput(item.productionStart, item.productionEnd);
+                  const haystack = [
+                    item.title,
+                    item.creator,
+                    item.director,
+                    years,
+                    ...(Array.isArray(item.genres) ? item.genres : [])
+                  ].join(" ");
+                  return normalizeSearchText(haystack).includes(searchNeedle);
+                };
+                const allMatchingItems = importPreview.items.filter(matchesImportPreviewSearch);
+                const readItems = isGoodreads ? allMatchingItems.filter(i => i.shelf !== "to-read") : allMatchingItems;
+                const toReadItems = isGoodreads ? allMatchingItems.filter(i => i.shelf === "to-read") : [];
 
                 function renderPreviewItem(item) {
                   return (
@@ -4591,6 +4835,11 @@ function App() {
                         <div className="import-preview-title-row">
                           <span className="import-preview-dot" style={{ background: item.color || colorForMediaType(item.mediaType) }} />
                           <strong>{item.title}</strong>
+                          {item.duplicateStatus ? (
+                            <span className={`import-duplicate-pill ${item.duplicateStatus === "existing" ? "existing" : "batch"}`}>
+                              {item.duplicateStatus === "existing" ? "Maybe already imported" : "Possible duplicate in this file"}
+                            </span>
+                          ) : null}
                           {Number.isFinite(item.productionStart) || Number.isFinite(item.productionEnd) ? (
                             <span className="import-preview-year-pill">
                               {formatYearOrRangeInput(item.productionStart, item.productionEnd)}
@@ -4635,6 +4884,9 @@ function App() {
                   return (
                     <>
                       {letterboxdGenreGroups.map((group) => {
+                        const filteredGroupItems = group.items.filter(matchesImportPreviewSearch);
+                        if (filteredGroupItems.length === 0) return null;
+                        const selectedInFiltered = filteredGroupItems.reduce((count, item) => count + (item.include ? 1 : 0), 0);
                         const isOpen = expandedImportGenres.includes(group.genre);
                         return (
                           <div key={`genre-${group.genre}`} className="import-genre-accordion">
@@ -4650,7 +4902,7 @@ function App() {
                               }
                             >
                               <span>{group.genre}</span>
-                              <small>{group.selected}/{group.items.length}</small>
+                              <small>{selectedInFiltered}/{filteredGroupItems.length}</small>
                               <span className="import-genre-caret">{isOpen ? "▾" : "▸"}</span>
                             </button>
                             {isOpen ? (
@@ -4659,12 +4911,15 @@ function App() {
                                   <button type="button" className="import-section-btn" onClick={() => setImportPreviewIncludeGenre(group.genre, true)}>Select all</button>
                                   <button type="button" className="import-section-btn" onClick={() => setImportPreviewIncludeGenre(group.genre, false)}>Deselect all</button>
                                 </div>
-                                {group.items.map(renderPreviewItem)}
+                                {filteredGroupItems.map(renderPreviewItem)}
                               </div>
                             ) : null}
                           </div>
                         );
                       })}
+                      {allMatchingItems.length === 0 ? (
+                        <div className="import-preview-empty">No items match this search.</div>
+                      ) : null}
                     </>
                   );
                 }
@@ -4675,7 +4930,7 @@ function App() {
                       <>
                         <div className="import-section-header">
                           <span>Read ({readItems.length})</span>
-                          <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: true } : i) } : cur)} className="import-section-btn">Select all</button>
+                          <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: i.duplicateStatus ? false : true } : i) } : cur)} className="import-section-btn">Select all</button>
                           <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: false } : i) } : cur)} className="import-section-btn">Deselect all</button>
                         </div>
                         {readItems.map(renderPreviewItem)}
@@ -4686,12 +4941,15 @@ function App() {
                         <div className="import-section-header import-section-want">
                           <span>To-Read ({toReadItems.length})</span>
                           <small className="import-section-hint">Will be marked as to-do</small>
-                          <button type="button" onClick={() => setImportPreviewIncludeShelf("to-read", true)} className="import-section-btn">Select all</button>
+                          <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf === "to-read" ? { ...i, include: i.duplicateStatus ? false : true } : i) } : cur)} className="import-section-btn">Select all</button>
                           <button type="button" onClick={() => setImportPreviewIncludeShelf("to-read", false)} className="import-section-btn">Deselect all</button>
                         </div>
                         {toReadItems.map(renderPreviewItem)}
                       </>
                     )}
+                    {allMatchingItems.length === 0 ? (
+                      <div className="import-preview-empty">No items match this search.</div>
+                    ) : null}
                   </>
                 );
               })()}
