@@ -589,6 +589,10 @@ html, body, #root {
   align-items: center;
   gap: 2px;
 }
+.hover-headline.clickable {
+  pointer-events: auto;
+  cursor: pointer;
+}
 .hover-subline {
   font-family: var(--font-ui);
   font-size: 0.82rem;

@@ -678,15 +678,16 @@ function allocateLaneCaps(productionCount, settingCount, maxTotal) {
   };
 }
 
-function buildLaneRenderItems(markers, laneCap, start, span, width) {
+function buildLaneRenderItems(markers, laneCap, start, span, width, options = {}) {
   if (markers.length === 0) return [];
 
+  const { forceYearDistinct = false } = options;
   const sorted = [...markers].sort((a, b) => a.primaryYear - b.primaryYear);
   const resolution = resolutionFromSpan(span);
 
   // Pixel-space density clustering: merge nodes that would render within MIN_NODE_PX_GAP px
   const yearsPerPixel = span / Math.max(1, width);
-  const minYearGap = MIN_NODE_PX_GAP * yearsPerPixel;
+  const minYearGap = forceYearDistinct ? Math.min(1, MIN_NODE_PX_GAP * yearsPerPixel) : (MIN_NODE_PX_GAP * yearsPerPixel);
 
   const groups = [];
   let currentGroup = [sorted[0]];
@@ -2052,8 +2053,8 @@ function App() {
   const viewEnd = clamp(timelineState.end, -100000, 100000);
   const viewStart = viewEnd - timelineState.span;
   const visibleRangeLabel = useMemo(
-    () => `${formatTimelineYear(viewStart)} - ${formatTimelineYear(viewEnd)}`,
-    [viewEnd, viewStart]
+    () => `${formatTimelineYear(viewStart)} - ${viewEnd >= presentYear - 0.001 ? "Present" : formatTimelineYear(viewEnd)}`,
+    [presentYear, viewEnd, viewStart]
   );
 
   const allKnownYears = useMemo(() => {
@@ -2180,6 +2181,33 @@ function App() {
     if (!trimmed) return [];
 
     const needle = normalizeSearchText(trimmed);
+    const needleTokens = needle.split(" ").filter(Boolean);
+    const matchedEras = HISTORICAL_ERAS.filter((era) => {
+      const label = normalizeSearchText(era.label);
+      const id = normalizeSearchText(era.id);
+      if (!needle) return false;
+      if (label.includes(needle) || id.includes(needle) || needle.includes(label) || needle.includes(id)) return true;
+      if (needleTokens.length <= 1) return false;
+      return needleTokens.every((token) => label.includes(token) || id.includes(token));
+    });
+
+    const entryRangeForLane = (entry, lane) => {
+      if (lane === MODE_SETTING) {
+        const start = Number.isFinite(entry.settingStart) ? entry.settingStart : entry.settingEnd;
+        const end = Number.isFinite(entry.settingEnd) ? entry.settingEnd : entry.settingStart;
+        return Number.isFinite(start) || Number.isFinite(end)
+          ? { start: Math.min(start ?? end, end ?? start), end: Math.max(start ?? end, end ?? start) }
+          : null;
+      }
+      const start = Number.isFinite(entry.productionStart) ? entry.productionStart : entry.productionEnd;
+      const end = Number.isFinite(entry.productionEnd) ? entry.productionEnd : entry.productionStart;
+      return Number.isFinite(start) || Number.isFinite(end)
+        ? { start: Math.min(start ?? end, end ?? start), end: Math.max(start ?? end, end ?? start) }
+        : null;
+    };
+
+    const overlaps = (a, b) => a && b && Number.isFinite(a.start) && Number.isFinite(a.end) && Number.isFinite(b.start) && Number.isFinite(b.end) && a.start <= b.end && a.end >= b.start;
+
     const byScore = filteredEntries
       .map((entry) => {
         const title = normalizeSearchText(entry.title);
@@ -2189,6 +2217,33 @@ function App() {
         else if (needle && title.includes(needle)) score += 90;
         if (needle && creator.startsWith(needle)) score += 45;
         else if (needle && creator.includes(needle)) score += 30;
+
+        if (matchedEras.length > 0) {
+          const settingRange = entryRangeForLane(entry, MODE_SETTING);
+          const productionRange = entryRangeForLane(entry, MODE_PRODUCTION);
+          for (const era of matchedEras) {
+            const eraRange = { start: era.start, end: era.end };
+            const settingHit = overlaps(settingRange, eraRange);
+            const productionHit = overlaps(productionRange, eraRange);
+            if (settingHit) score += parsedSearch.laneHint === MODE_SETTING ? 95 : 72;
+            if (productionHit) score += parsedSearch.laneHint === MODE_PRODUCTION ? 90 : 66;
+          }
+        }
+
+        if (parsedSearch.yearRange) {
+          const yearFilterRange = { start: parsedSearch.yearRange[0], end: parsedSearch.yearRange[1] };
+          const settingRange = entryRangeForLane(entry, MODE_SETTING);
+          const productionRange = entryRangeForLane(entry, MODE_PRODUCTION);
+          const lane = parsedSearch.laneHint;
+          if (lane === MODE_SETTING) {
+            if (overlaps(settingRange, yearFilterRange)) score += 60;
+          } else if (lane === MODE_PRODUCTION) {
+            if (overlaps(productionRange, yearFilterRange)) score += 60;
+          } else if (overlaps(settingRange, yearFilterRange) || overlaps(productionRange, yearFilterRange)) {
+            score += 50;
+          }
+        }
+
         if (!needle) score += 10;
         const year = entry.productionStart ?? entry.productionEnd ?? entry.settingStart ?? entry.settingEnd ?? -999999;
         return { entry, score, year };
@@ -2197,7 +2252,7 @@ function App() {
       .sort((a, b) => (b.score - a.score) || (b.year - a.year));
 
     return byScore.slice(0, 10).map((row) => row.entry);
-  }, [filteredEntries, query]);
+  }, [filteredEntries, parsedSearch.laneHint, parsedSearch.yearRange, query]);
 
   const importPreviewSelectedCount = useMemo(() => {
     if (!importPreview) return 0;
@@ -2484,6 +2539,7 @@ function App() {
     const minX = -pixelBuffer;
     const maxX = canvasRect.width + pixelBuffer;
     const inBufferedViewport = (item) => item.x >= minX && item.x <= maxX;
+    const forceYearDistinct = Boolean(lockedRange && timelineState.span <= 120);
 
     return {
       [MODE_PRODUCTION]: buildLaneRenderItems(
@@ -2491,14 +2547,16 @@ function App() {
         laneCaps[MODE_PRODUCTION],
         viewStart,
         timelineState.span,
-        canvasRect.width
+        canvasRect.width,
+        { forceYearDistinct }
       ).filter(inBufferedViewport),
       [MODE_SETTING]: buildLaneRenderItems(
         markersByLane[MODE_SETTING],
         laneCaps[MODE_SETTING],
         viewStart,
         timelineState.span,
-        canvasRect.width
+        canvasRect.width,
+        { forceYearDistinct }
       ).filter(inBufferedViewport)
     };
   }, [canvasRect.width, laneCaps, lockedRange, markersByLane, timelineState.span, viewStart]);
@@ -4308,6 +4366,13 @@ function App() {
     setShowRangePanel(false);
   }
 
+  function zoomToEra(era) {
+    if (!era || !Number.isFinite(era.start) || !Number.isFinite(era.end)) return;
+    const span = Math.max(1, era.end - era.start);
+    const padding = span * 0.06;
+    animateTimelineToWindow(era.start - padding, span + padding * 2);
+  }
+
   function showTocScrubHint(duration = 900) {
     setTocScrubHintVisible(true);
     if (tocScrubHintTimerRef.current) window.clearTimeout(tocScrubHintTimerRef.current);
@@ -4578,7 +4643,7 @@ function App() {
               setHoveredEntryId(null);
             }
           }}
-          placeholder="Search by title, creator, or year…"
+          placeholder="Search by title, creator, year, or era…"
         />
         {query ? (
           <button type="button" className="search-clear-btn" onClick={clearSearch} aria-label="Clear search">
@@ -4622,7 +4687,15 @@ function App() {
         ) : null}
       </div>
       {hoveredHeadline ? (
-        <div className="hover-headline">
+        <div
+          className={`hover-headline ${hoveredEraId ? "clickable" : ""}`}
+          onClick={() => {
+            if (!hoveredEraId) return;
+            const era = visibleTimelineEras.find((item) => item.id === hoveredEraId) || HISTORICAL_ERAS.find((item) => item.id === hoveredEraId);
+            if (!era) return;
+            zoomToEra(era);
+          }}
+        >
           {hoveredHeadline}
           {hoveredSubline ? <span className="hover-subline">{hoveredSubline}</span> : null}
         </div>
@@ -5545,11 +5618,7 @@ function App() {
                   fill={item.era.color}
                   opacity={hoveredEraId === item.era.id ? "0.28" : "0.18"}
                   rx="2"
-                  onClick={() => {
-                    const span = Math.max(item.era.end - item.era.start, 1);
-                    const padding = span * 0.06;
-                    animateTimelineToWindow(item.era.start - padding, span + padding * 2);
-                  }}
+                  onClick={() => zoomToEra(item.era)}
                   style={{ transition: "opacity 200ms ease", pointerEvents: "all", cursor: "pointer" }}
                 />
                 {labelAllowed[i] ? (
@@ -5558,6 +5627,8 @@ function App() {
                     y={topY - 8}
                     textAnchor="middle"
                     className="era-label"
+                    style={{ pointerEvents: "all", cursor: "pointer" }}
+                    onClick={() => zoomToEra(item.era)}
                   >
                     {item.era.label}
                   </text>
@@ -5703,16 +5774,26 @@ function App() {
             const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
             const allSingleItems = typeGroups.filter((g) => g.items.length === 1).flatMap((g) => g.items);
             const directEntries = isSingleType ? (activeGroup?.items || []) : [];
-            const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((g) => g.mediaType === activeGroup.mediaType) : -1;
-            const activeGroupX = activeGroupIndex >= 0 ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, gSpacing) : baseX;
+            const topSlots = [
+              ...multiItemGroups.map((group) => ({ kind: "group", mediaType: group.mediaType, group })),
+              ...allSingleItems.map((item) => ({ kind: "single", mediaType: item.entry.mediaType, item }))
+            ];
+            const activeGroupIndex = activeGroup
+              ? topSlots.findIndex((slot) => slot.kind === "group" && slot.mediaType === activeGroup.mediaType)
+              : -1;
+            const activeGroupX = activeGroupIndex >= 0 ? spreadX(baseX, activeGroupIndex, topSlots.length, gSpacing) : baseX;
             const lineProps = { stroke: "var(--stroke-strong)", strokeWidth: "1", opacity: "0.5", strokeLinecap: "round" };
             return (
               <g className="branch-connectors" pointerEvents="none">
-                {!isSingleType && multiItemGroups.map((group, i) => (
-                  <line key={`cl-g-${group.mediaType}`} x1={baseX} y1={baseY} x2={spreadX(baseX, i, multiItemGroups.length, gSpacing)} y2={groupY} {...lineProps} />
-                ))}
-                {!isSingleType && allSingleItems.map((item, i) => (
-                  <line key={`cl-s-${item.entry.id}`} x1={baseX} y1={baseY} x2={spreadX(baseX, i, allSingleItems.length, gSpacing)} y2={groupY} {...lineProps} />
+                {!isSingleType && topSlots.map((slot, i) => (
+                  <line
+                    key={slot.kind === "group" ? `cl-g-${slot.mediaType}` : `cl-s-${slot.item.entry.id}`}
+                    x1={baseX}
+                    y1={baseY}
+                    x2={spreadX(baseX, i, topSlots.length, gSpacing)}
+                    y2={groupY}
+                    {...lineProps}
+                  />
                 ))}
                 {!isSingleType && activeEntries.map((item, i) => (
                   <line key={`cl-e-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={spreadX(activeGroupX, i, activeEntries.length, iSpacing)} y2={detailY} {...lineProps} />
@@ -5859,30 +5940,62 @@ function App() {
                 const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
                 const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
                 const allSingleItems = singleItemGroups.flatMap((g) => g.items);
-                const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+                const topSlots = [
+                  ...multiItemGroups.map((group) => ({ kind: "group", mediaType: group.mediaType, group })),
+                  ...allSingleItems.map((item) => ({ kind: "single", mediaType: item.entry.mediaType, item }))
+                ];
+                const activeGroupIndex = activeGroup
+                  ? topSlots.findIndex((slot) => slot.kind === "group" && slot.mediaType === activeGroup.mediaType)
+                  : -1;
                 const activeGroupX = activeGroupIndex >= 0
-                  ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, groupSpacing)
+                  ? spreadX(baseX, activeGroupIndex, topSlots.length, groupSpacing)
                   : baseX;
 
                 return (
                   <>
-                    {multiItemGroups.map((group, index) => {
+                    {topSlots.map((slot, index) => {
                       if (isSingleType) return null;
-                      const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
-                      const isActiveType = expandedBranchType === group.mediaType;
+                      const x = spreadX(baseX, index, topSlots.length, groupSpacing);
+                      if (slot.kind === "group") {
+                        const group = slot.group;
+                        const isActiveType = expandedBranchType === group.mediaType;
+                        return (
+                          <button
+                            key={`branch-type-${expandedCluster.id}-${group.mediaType}`}
+                            type="button"
+                            className={`node branch-node type-group-node${isActiveType ? " active" : ""}`}
+                            style={{ left: `${x}px`, top: `${groupY}px`, background: colorForMediaType(group.mediaType) }}
+                            onClick={() => setExpandedBranchType((current) => (current === group.mediaType ? null : group.mediaType))}
+                            onMouseEnter={() => setHoveredBranchLabel(formatTypeClusterLabel(group, expandedCluster))}
+                            onMouseLeave={() => setHoveredBranchLabel("")}
+                            title={formatTypeClusterLabel(group, expandedCluster)}
+                          >
+                            {group.count}
+                          </button>
+                        );
+                      }
+                      const entry = slot.item.entry;
                       return (
                         <button
-                          key={`branch-type-${expandedCluster.id}-${group.mediaType}`}
+                          key={`branch-single-${entry.id}`}
                           type="button"
-                          className={`node branch-node type-group-node${isActiveType ? " active" : ""}`}
-                          style={{ left: `${x}px`, top: `${groupY}px`, background: colorForMediaType(group.mediaType) }}
-                          onClick={() => setExpandedBranchType((current) => (current === group.mediaType ? null : group.mediaType))}
-                          onMouseEnter={() => setHoveredBranchLabel(formatTypeClusterLabel(group, expandedCluster))}
-                          onMouseLeave={() => setHoveredBranchLabel("")}
-                          title={formatTypeClusterLabel(group, expandedCluster)}
-                        >
-                          {group.count}
-                        </button>
+                          className="node branch-node"
+                          style={{ left: `${x}px`, top: `${groupY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
+                          onMouseEnter={() => setHoveredEntryId(entry.id)}
+                          onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
+                          onClick={(event) =>
+                            onNodeActivate(
+                              {
+                                entryId: entry.id,
+                                lane: branchLane,
+                                anchorYear: slot.item.year,
+                                resolution: "year"
+                              },
+                              event
+                            )
+                          }
+                          title={entry.title}
+                        />
                       );
                     })}
 
@@ -5896,34 +6009,6 @@ function App() {
                           type="button"
                           className="node branch-node branch-item-node"
                           style={{ left: `${x}px`, top: `${detailY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
-                          onMouseEnter={() => setHoveredEntryId(entry.id)}
-                          onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
-                          onClick={(event) =>
-                            onNodeActivate(
-                              {
-                                entryId: entry.id,
-                                lane: branchLane,
-                                anchorYear: item.year,
-                                resolution: "year"
-                              },
-                              event
-                            )
-                          }
-                          title={entry.title}
-                        />
-                      );
-                    })}
-
-                    {allSingleItems.map((item, index) => {
-                      if (isSingleType) return null;
-                      const entry = item.entry;
-                      const x = spreadX(baseX, index, allSingleItems.length, groupSpacing);
-                      return (
-                        <button
-                          key={`branch-single-${entry.id}`}
-                          type="button"
-                          className="node branch-node"
-                          style={{ left: `${x}px`, top: `${groupY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
                           onMouseEnter={() => setHoveredEntryId(entry.id)}
                           onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
                           onClick={(event) =>
@@ -6037,17 +6122,32 @@ function App() {
               const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
               const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
               const allSingleItems = singleItemGroups.flatMap((g) => g.items);
-              const activeGroupIndex = activeGroup ? multiItemGroups.findIndex((group) => group.mediaType === activeGroup.mediaType) : -1;
+              const topSlots = [
+                ...multiItemGroups.map((group) => ({ kind: "group", mediaType: group.mediaType, group })),
+                ...allSingleItems.map((item) => ({ kind: "single", mediaType: item.entry.mediaType, item }))
+              ];
+              const activeGroupIndex = activeGroup
+                ? topSlots.findIndex((slot) => slot.kind === "group" && slot.mediaType === activeGroup.mediaType)
+                : -1;
               const activeGroupX = activeGroupIndex >= 0
-                ? spreadX(baseX, activeGroupIndex, multiItemGroups.length, groupSpacing)
+                ? spreadX(baseX, activeGroupIndex, topSlots.length, groupSpacing)
                 : baseX;
 
               return (
                 <>
-                  {multiItemGroups.map((group, index) => {
+                  {topSlots.map((slot, index) => {
                     if (isSingleType) return null;
-                    const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
-                    return <line key={`branch-type-line-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
+                    const x = spreadX(baseX, index, topSlots.length, groupSpacing);
+                    return (
+                      <line
+                        key={slot.kind === "group" ? `branch-type-line-${slot.mediaType}` : `branch-single-line-${slot.item.entry.id}`}
+                        x1={baseX}
+                        y1={baseY}
+                        x2={x}
+                        y2={groupY}
+                        className="branch-line"
+                      />
+                    );
                   })}
                   {activeEntries.map((item, index) => {
                     if (isSingleType) return null;
@@ -6080,35 +6180,39 @@ function App() {
           );
         })() : null}
 
-        <button
-          className="glass-btn timeline-pan-btn pan-left"
-          type="button"
-          onClick={() => {
-            const panAmount = timelineState.span * 0.2;
-            const newStart = viewStart - panAmount;
-            pendingViewStartRef.current = newStart;
-            scheduleTimelineWindow(newStart, timelineState.span);
-          }}
-          title="Pan left"
-          aria-label="Pan timeline left"
-        >
-          ‹
-        </button>
+        {!lockedRange ? (
+          <>
+            <button
+              className="glass-btn timeline-pan-btn pan-left"
+              type="button"
+              onClick={() => {
+                const panAmount = timelineState.span * 0.2;
+                const newStart = viewStart - panAmount;
+                pendingViewStartRef.current = newStart;
+                scheduleTimelineWindow(newStart, timelineState.span);
+              }}
+              title="Pan left"
+              aria-label="Pan timeline left"
+            >
+              ‹
+            </button>
 
-        <button
-          className="glass-btn timeline-pan-btn pan-right"
-          type="button"
-          onClick={() => {
-            const panAmount = timelineState.span * 0.2;
-            const newStart = viewStart + panAmount;
-            pendingViewStartRef.current = newStart;
-            scheduleTimelineWindow(newStart, timelineState.span);
-          }}
-          title="Pan right"
-          aria-label="Pan timeline right"
-        >
-          ›
-        </button>
+            <button
+              className="glass-btn timeline-pan-btn pan-right"
+              type="button"
+              onClick={() => {
+                const panAmount = timelineState.span * 0.2;
+                const newStart = viewStart + panAmount;
+                pendingViewStartRef.current = newStart;
+                scheduleTimelineWindow(newStart, timelineState.span);
+              }}
+              title="Pan right"
+              aria-label="Pan timeline right"
+            >
+              ›
+            </button>
+          </>
+        ) : null}
       </section>
 
       {viewMode === "scatter" && scatterBounds ? (
