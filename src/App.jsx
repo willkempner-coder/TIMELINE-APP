@@ -1302,52 +1302,48 @@ function App() {
       const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
 
       switch (key) {
-        case "ArrowLeft":
+        case "ArrowLeft": {
           event.preventDefault();
-          const panLeftAmount = span * 0.1;
-          pendingViewStartRef.current = start - panLeftAmount;
-          scheduleTimelineWindow(start - panLeftAmount, span);
+          const panAmt = span * 0.1;
+          pendingViewStartRef.current = start - panAmt;
+          scheduleTimelineWindow(start - panAmt, span);
           break;
-
-        case "ArrowRight":
+        }
+        case "ArrowRight": {
           event.preventDefault();
-          const panRightAmount = span * 0.1;
-          pendingViewStartRef.current = start + panRightAmount;
-          scheduleTimelineWindow(start + panRightAmount, span);
+          const panAmt = span * 0.1;
+          pendingViewStartRef.current = start + panAmt;
+          scheduleTimelineWindow(start + panAmt, span);
           break;
-
+        }
         case "ArrowUp":
         case "=":
-        case "+":
+        case "+": {
           event.preventDefault();
-          const newSpanZoomIn = Math.max(0.4, span * 0.85);
-          updateSpan(newSpanZoomIn);
+          updateSpan(Math.max(0.4, span * 0.85));
           break;
-
+        }
         case "ArrowDown":
-        case "-":
+        case "-": {
           event.preventDefault();
-          const newSpanZoomOut = Math.min(maxSpan, span * 1.15);
-          updateSpan(newSpanZoomOut);
+          updateSpan(Math.min(maxSpan, span * 1.15));
           break;
-
-        case "Home":
+        }
+        case "Home": {
           event.preventDefault();
-          const minYear = timelineBounds.start;
-          const homeSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - minYear) / 2));
-          pendingViewStartRef.current = minYear;
-          scheduleTimelineWindow(minYear, homeSpan);
+          const homeSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
+          pendingViewStartRef.current = timelineBounds.start;
+          scheduleTimelineWindow(timelineBounds.start, homeSpan);
           break;
-
-        case "End":
+        }
+        case "End": {
           event.preventDefault();
-          const endYear = timelineBounds.end;
-          const endSpan = Math.max(0.4, Math.min(span, Math.max(0.4, endYear - timelineBounds.start) / 2));
-          const endStart = Math.max(timelineBounds.start, endYear - endSpan);
+          const endSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - timelineBounds.start) / 2));
+          const endStart = Math.max(timelineBounds.start, timelineBounds.end - endSpan);
           pendingViewStartRef.current = endStart;
           scheduleTimelineWindow(endStart, endSpan);
           break;
-
+        }
         default:
           break;
       }
@@ -3279,30 +3275,26 @@ function App() {
 
       <div className="corner-buttons top-right">
         {lockedRange ? (
-          <button type="button" className="glass-btn range-lock-chip" onClick={() => toggleMainMenu("range")} title="Edit focused range">
-            <span className="range-lock-chip-text">
-              [{formatTimelineYear(lockedRange.start)} – {formatTimelineYear(lockedRange.end)}]
-            </span>
+          <div className="range-lock-chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 8px 0 12px", borderRadius: 8, border: "1px solid var(--stroke-med)", background: "var(--surface)", boxShadow: "var(--shadow-sm)", fontSize: "0.78rem", letterSpacing: "0.03em", color: "var(--text)", whiteSpace: "nowrap" }}>
             <span
-              role="button"
-              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => toggleMainMenu("range")}
+              title="Edit focused range"
+            >
+              <span style={{ color: "var(--muted)" }}>[</span>
+              {formatTimelineYear(lockedRange.start)} – {formatTimelineYear(lockedRange.end)}
+              <span style={{ color: "var(--muted)" }}>]</span>
+            </span>
+            <button
+              type="button"
               className="range-lock-chip-close"
               aria-label="Exit range focus"
-              onClick={(event) => {
-                event.stopPropagation();
-                clearRangeLock();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  clearRangeLock();
-                }
-              }}
+              onClick={(e) => { e.stopPropagation(); clearRangeLock(); }}
+              style={{ marginLeft: 2 }}
             >
               ×
-            </span>
-          </button>
+            </button>
+          </div>
         ) : null}
         <button
           className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
