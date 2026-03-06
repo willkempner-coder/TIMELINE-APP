@@ -27,17 +27,25 @@ const MEDIA_TYPES = [
 ];
 
 const HISTORICAL_ERAS = [
-  { id: "ancient",       label: "Ancient",        start: -3000, end: 476,  color: "#8B6914" },
-  { id: "medieval",      label: "Medieval",       start: 476,   end: 1492, color: "#5B4080" },
-  { id: "early-modern",  label: "Early Modern",   start: 1492,  end: 1789, color: "#3B6040" },
-  { id: "revolutionary", label: "Revolutionary",  start: 1789,  end: 1848, color: "#805030" },
-  { id: "victorian",     label: "Victorian",      start: 1837,  end: 1901, color: "#704060" },
-  { id: "belle-epoque",  label: "Belle Époque",   start: 1871,  end: 1914, color: "#507060" },
-  { id: "wwi",           label: "World War I",    start: 1914,  end: 1918, color: "#804030" },
-  { id: "interwar",      label: "Interwar",       start: 1918,  end: 1939, color: "#607040" },
-  { id: "wwii",          label: "World War II",   start: 1939,  end: 1945, color: "#803030" },
-  { id: "cold-war",      label: "Cold War",       start: 1947,  end: 1991, color: "#304080" },
-  { id: "modern",        label: "Modern Era",     start: 1991,  end: 2015, color: "#304060" },
+  // Tier 1: broad (zoomed far out)
+  { id: "pre-modern",    label: "Pre-Modern",     start: -3000, end: 1492, color: "#6f633f", tier: 1, preset: false },
+  { id: "modern-history",label: "Modern History", start: 1492,  end: 2100, color: "#4b5e76", tier: 1, preset: false },
+  // Tier 2: medium
+  { id: "ancient",       label: "Ancient",        start: -3000, end: 476,  color: "#8B6914", tier: 2 },
+  { id: "medieval",      label: "Medieval",       start: 476,   end: 1492, color: "#5B4080", tier: 2 },
+  { id: "early-modern",  label: "Early Modern",   start: 1492,  end: 1789, color: "#3B6040", tier: 2 },
+  { id: "industrial",    label: "Industrial",     start: 1760,  end: 1914, color: "#6a5b46", tier: 2, preset: false },
+  { id: "postwar",       label: "Postwar",        start: 1945,  end: 1991, color: "#4c5f86", tier: 2, preset: false },
+  { id: "contemporary",  label: "Contemporary",   start: 1991,  end: 2100, color: "#304060", tier: 2, preset: false },
+  // Tier 3: precise (zoomed in)
+  { id: "revolutionary", label: "Revolutionary",  start: 1789,  end: 1848, color: "#805030", tier: 3 },
+  { id: "victorian",     label: "Victorian",      start: 1837,  end: 1901, color: "#704060", tier: 3 },
+  { id: "belle-epoque",  label: "Belle Époque",   start: 1871,  end: 1914, color: "#507060", tier: 3 },
+  { id: "wwi",           label: "World War I",    start: 1914,  end: 1918, color: "#804030", tier: 3 },
+  { id: "interwar",      label: "Interwar",       start: 1918,  end: 1939, color: "#607040", tier: 3 },
+  { id: "wwii",          label: "World War II",   start: 1939,  end: 1945, color: "#803030", tier: 3 },
+  { id: "cold-war",      label: "Cold War",       start: 1947,  end: 1991, color: "#304080", tier: 3 },
+  { id: "modern",        label: "Modern Era",     start: 1991,  end: 2015, color: "#304060", tier: 3 },
 ];
 
 // SVG path data for media type icons (viewBox 0 0 24 24, stroke-based)
@@ -67,10 +75,10 @@ const UNIFIED_COLORS = [
 const MEDIA_TYPE_COLORS = {
   book: "#3f6f52",
   movie: "#2f6ea3",
-  television: "#4b5fa8",
+  television: "#a44b76",
   podcast: "#6b4aa2",
   theater: "#8a4f34",
-  photo: "#2f7a78",
+  photo: "#1f8fa8",
   painting: "#8f5c39",
   article: "#6a5f4a"
 };
@@ -97,6 +105,43 @@ const FUTURE_HEADROOM_YEARS = 300;
 const OVERVIEW_DEFAULT_HEIGHT = 58;
 const OVERVIEW_MIN_HEIGHT = 44;
 const OVERVIEW_MAX_HEIGHT = 88;
+
+const WIKIDATA_MEDIA_INSTANCE_MAP = {
+  Q571: { label: "Book", mediaType: "book" },
+  Q11424: { label: "Film", mediaType: "movie" },
+  Q24869: { label: "Feature Film", mediaType: "movie" },
+  Q506240: { label: "Television Film", mediaType: "television" },
+  Q5398426: { label: "Television Series", mediaType: "television" },
+  Q21191270: { label: "Television Program", mediaType: "television" },
+  Q1259759: { label: "Miniseries", mediaType: "television" },
+  Q3464665: { label: "Miniseries", mediaType: "television" },
+  Q1277575: { label: "Podcast", mediaType: "podcast" },
+  Q25379: { label: "Theater", mediaType: "theater" },
+  Q125191: { label: "Photo", mediaType: "photo" },
+  Q3305213: { label: "Painting", mediaType: "painting" },
+  Q191067: { label: "Article", mediaType: "article" },
+  Q13442814: { label: "Article", mediaType: "article" },
+  Q7889: { label: "Video Game", mediaType: null }
+};
+
+function classifyWikidataMedia(instanceClaims, description = "") {
+  for (const id of Array.isArray(instanceClaims) ? instanceClaims : []) {
+    if (WIKIDATA_MEDIA_INSTANCE_MAP[id]) return WIKIDATA_MEDIA_INSTANCE_MAP[id];
+  }
+  const desc = String(description || "").toLowerCase();
+  if (!desc) return null;
+  if (/video game|computer game/.test(desc)) return WIKIDATA_MEDIA_INSTANCE_MAP.Q7889;
+  if (/mini[- ]?series|miniseries/.test(desc)) return { label: "Miniseries", mediaType: "television" };
+  if (/television|tv series|tv show/.test(desc)) return { label: "Television", mediaType: "television" };
+  if (/film|movie|documentary/.test(desc)) return { label: "Film", mediaType: "movie" };
+  if (/book|novel|memoir/.test(desc)) return { label: "Book", mediaType: "book" };
+  if (/podcast/.test(desc)) return { label: "Podcast", mediaType: "podcast" };
+  if (/play|stage/.test(desc)) return { label: "Theater", mediaType: "theater" };
+  if (/photograph|photo/.test(desc)) return { label: "Photo", mediaType: "photo" };
+  if (/painting/.test(desc)) return { label: "Painting", mediaType: "painting" };
+  if (/article|essay/.test(desc)) return { label: "Article", mediaType: "article" };
+  return null;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -269,6 +314,7 @@ function normalizeEntry(raw) {
     mediaType,
     title: String(raw.title),
     creator: String(raw.creator || raw.author || ""),
+    director: String(raw.director || ""),
     productionStart,
     productionEnd,
     settingStart,
@@ -329,9 +375,29 @@ function parseManualYearInput(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   if (!text) return null;
-  const bceMatch = text.match(/^(\d+)\s*BCE$/i);
+  const bceMatch = text.match(/^(\d+)\s*(?:B\.?\s*C\.?\s*E?|B\.?\s*C\.?)$/i);
   if (bceMatch) return -Number(bceMatch[1]);
   return toYear(text);
+}
+
+function getYearRangeInputWarning(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const match = text.match(/^(.+?)\s*(?:-|–|to)\s*(.+)$/i);
+  if (!match) return "";
+  const leftRaw = String(match[1] || "").trim();
+  const rightRaw = String(match[2] || "").trim();
+  const left = parseManualYearInput(leftRaw);
+  const right = parseManualYearInput(rightRaw);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    return "Use a year or range like 1900-1909, 1000 BCE-200 BCE, or 100 BCE-50.";
+  }
+  const leftHasBc = /\bB\.?\s*C\.?/i.test(leftRaw);
+  const rightHasBc = /\bB\.?\s*C\.?/i.test(rightRaw);
+  if (!leftHasBc && !rightHasBc && left > right && left > 0 && right >= 0) {
+    return `Range looks reversed. Did you mean ${Math.round(left)} BCE to ${Math.round(right)}?`;
+  }
+  return "";
 }
 
 function parseYearRangeText(value) {
@@ -370,11 +436,11 @@ function formatYearOrRangeInput(start, end) {
   const s = toYear(start);
   const e = toYear(end);
   if (Number.isFinite(s) && Number.isFinite(e)) {
-    if (s === e) return String(s);
-    return `${Math.min(s, e)}-${Math.max(s, e)}`;
+    if (s === e) return formatTimelineYear(s);
+    return `${formatTimelineYear(Math.min(s, e))} - ${formatTimelineYear(Math.max(s, e))}`;
   }
-  if (Number.isFinite(s)) return String(s);
-  if (Number.isFinite(e)) return String(e);
+  if (Number.isFinite(s)) return formatTimelineYear(s);
+  if (Number.isFinite(e)) return formatTimelineYear(e);
   return "";
 }
 
@@ -460,7 +526,7 @@ async function fromLetterboxdZip(arrayBuffer) {
       const prodYear = toYear(row.Year);
       const heuristic = inferSettingRangeHeuristic(title, prodYear);
       const hasHeuristicSetting = Number.isFinite(heuristic.settingStart) || Number.isFinite(heuristic.settingEnd);
-      const mediaType = /season|episode/i.test(title) ? "television" : "movie";
+      const mediaType = "movie";
       const letterboxdUri = (row["Letterboxd URI"] || row.LetterboxdURI || row.URL || row.url || "").trim();
 
       return {
@@ -468,6 +534,7 @@ async function fromLetterboxdZip(arrayBuffer) {
         mediaType,
         title,
         creator: "",
+        director: "",
         productionStart: prodYear,
         productionEnd: prodYear,
         settingStart: heuristic.settingStart,
@@ -1683,6 +1750,7 @@ function App() {
   const tocDragRef = useRef({ active: false });
   const tocScrubHintTimerRef = useRef(null);
   const addSheetRef = useRef(null);
+  const titleSearchWrapRef = useRef(null);
   const settingsSheetRef = useRef(null);
   const importPreviewRef = useRef(null);
   const rangeSheetRef = useRef(null);
@@ -1826,10 +1894,23 @@ function App() {
       if (searchWrapRef.current.contains(event.target)) return;
       setSearchFocused(false);
       setSearchActiveIndex(-1);
+      setHoveredEntryId(null);
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, []);
+
+  useEffect(() => {
+    if (titleSuggestions.length === 0) return undefined;
+    const onPointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (titleSearchWrapRef.current?.contains(target)) return;
+      setTitleSuggestions([]);
+    };
+    window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+  }, [titleSuggestions.length]);
 
   useEffect(() => {
     const onPointerDown = (event) => {
@@ -1897,6 +1978,7 @@ function App() {
       mediaType: found.mediaType,
       title: found.title,
       creator: found.creator,
+      director: found.director ?? "",
       productionStart: found.productionStart ?? "",
       productionEnd: found.productionEnd ?? "",
       settingStart: found.settingStart ?? "",
@@ -2122,6 +2204,8 @@ function App() {
     return importPreview.items.reduce((count, item) => count + (item.include ? 1 : 0), 0);
   }, [importPreview]);
 
+  const hasSearchHoverFocus = searchFocused && query.trim().length > 0 && searchSuggestions.length > 0;
+
   const importPreviewDuplicateCount = useMemo(() => {
     if (!importPreview) return 0;
     return importPreview.items.reduce((count, item) => count + (item.duplicateStatus ? 1 : 0), 0);
@@ -2248,6 +2332,19 @@ function App() {
     }
     return set;
   }, [entries]);
+
+  const visibleTimelineEras = useMemo(() => {
+    let allowedTiers;
+    if (timelineState.span > 1400) allowedTiers = new Set([1]);
+    else if (timelineState.span > 500) allowedTiers = new Set([1, 2]);
+    else if (timelineState.span > 180) allowedTiers = new Set([2, 3]);
+    else allowedTiers = new Set([3]);
+
+    return HISTORICAL_ERAS
+      .filter((era) => allowedTiers.has(era.tier || 3))
+      .filter((era) => activeEraIds.has(era.id))
+      .sort((a, b) => (a.end - a.start) - (b.end - b.start));
+  }, [activeEraIds, timelineState.span]);
 
   const scatterBounds = useMemo(() => {
     let minProd = Infinity, maxProd = -Infinity, minSet = Infinity, maxSet = -Infinity;
@@ -2777,16 +2874,20 @@ function App() {
   }
 
   function applyTimelineWindow(nextStart, nextSpan = timelineState.span) {
+    const clamped = clampTimelineWindow(nextStart, nextSpan);
+    setTimelineState((current) => ({
+      ...current,
+      span: clamped.span,
+      end: clamped.start + clamped.span
+    }));
+  }
+
+  function clampTimelineWindow(nextStart, nextSpan = timelineState.span) {
     const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
     const span = clamp(nextSpan, 0.4, maxSpan);
     const maxStart = timelineBounds.end - span;
     const start = clamp(nextStart, timelineBounds.start, maxStart);
-
-    setTimelineState((current) => ({
-      ...current,
-      span,
-      end: start + span
-    }));
+    return { start, span };
   }
 
   function animateTimelineToYear(targetYear, targetSpan = timelineState.span, onComplete) {
@@ -2864,7 +2965,10 @@ function App() {
   }
 
   function scheduleTimelineWindow(nextStart, nextSpan = timelineState.span) {
-    scheduledWindowRef.current = { start: nextStart, span: nextSpan };
+    const clamped = clampTimelineWindow(nextStart, nextSpan);
+    pendingViewStartRef.current = clamped.start;
+    pendingZoomSpanRef.current = clamped.span;
+    scheduledWindowRef.current = clamped;
     if (scheduledWindowRafRef.current) return;
 
     scheduledWindowRafRef.current = window.requestAnimationFrame(() => {
@@ -2940,7 +3044,7 @@ function App() {
     const yearAtX = start + (relativeX / width) * span;
 
     if (showEras) {
-      const hoveredEra = HISTORICAL_ERAS.find((era) => yearAtX >= era.start && yearAtX <= era.end) || null;
+      const hoveredEra = visibleTimelineEras.find((era) => yearAtX >= era.start && yearAtX <= era.end) || null;
       setHoveredEraId(hoveredEra?.id || null);
       setHoveredTimelineLabel("");
     } else {
@@ -2953,7 +3057,7 @@ function App() {
     const pointer = lastPointerRef.current;
     if (!pointer.inside) return;
     refreshTimelineHoverAt(pointer.x, pointer.y, viewStart, timelineState.span, { remember: false });
-  }, [viewStart, timelineState.span, canvasRect.width, canvasRect.height, lanes, showEras]);
+  }, [viewStart, timelineState.span, canvasRect.width, canvasRect.height, lanes, showEras, visibleTimelineEras]);
 
   function onWheelNavigate(event) {
     event.preventDefault();
@@ -2979,7 +3083,6 @@ function App() {
       const yearsPerPixel = pendingZoomSpanRef.current / Math.max(1, canvasRect.width);
       const deltaYears = event.deltaX * yearsPerPixel * 1.25;
       const nextStart = pendingViewStartRef.current + deltaYears;
-      pendingViewStartRef.current = nextStart;
       scheduleTimelineWindow(nextStart, pendingZoomSpanRef.current);
       refreshTimelineHoverAt(event.clientX, event.clientY, pendingViewStartRef.current, pendingZoomSpanRef.current);
     }
@@ -3175,11 +3278,30 @@ function App() {
       const res = await fetch(url);
       if (!res.ok) return [];
       const data = await res.json();
-      return (data.search || []).map(item => ({
-        id: item.id,
-        label: item.label || "",
-        description: item.description || "",
-      }));
+      const baseItems = Array.isArray(data.search) ? data.search : [];
+      if (baseItems.length === 0) return [];
+      const ids = baseItems.map((item) => item.id).filter(Boolean);
+      const claimsRes = await fetch(
+        `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(ids.join("|"))}&languages=en&format=json&origin=*&props=claims`
+      );
+      const claimsData = claimsRes.ok ? await claimsRes.json() : null;
+      return baseItems
+        .map((item) => {
+          const claims = claimsData?.entities?.[item.id]?.claims || {};
+          const instanceClaims = (claims.P31 || [])
+            .map((c) => c?.mainsnak?.datavalue?.value?.id)
+            .filter(Boolean);
+          const classification = classifyWikidataMedia(instanceClaims, item.description || "");
+          if (!classification) return null;
+          return {
+            id: item.id,
+            label: item.label || "",
+            description: item.description || "",
+            mediaType: classification.mediaType || null,
+            mediaKindLabel: classification.label
+          };
+        })
+        .filter(Boolean);
     } catch {
       return [];
     }
@@ -3220,11 +3342,8 @@ function App() {
 
       // Media type from P31 (instance of)
       const instanceClaims = (claims["P31"] || []).map(c => c.mainsnak?.datavalue?.value?.id);
-      let mediaType = null;
-      if (instanceClaims.includes("Q11424") || instanceClaims.includes("Q24869")) mediaType = "movie";
-      else if (instanceClaims.includes("Q5398426") || instanceClaims.includes("Q63952888")) mediaType = "television";
-      else if (instanceClaims.some(id => ["Q571", "Q7725634", "Q8261"].includes(id))) mediaType = "book";
-      else if (instanceClaims.includes("Q1277575")) mediaType = "podcast";
+      const classification = classifyWikidataMedia(instanceClaims);
+      const mediaType = classification?.mediaType || null;
 
       // Creator from P57 (director), P50 (author), P170 (creator)
       let creator = "";
@@ -3271,7 +3390,7 @@ function App() {
     setAddDraft(current => ({
       ...current,
       title: suggestion.label,
-      ...(details.mediaType ? { mediaType: details.mediaType } : {}),
+      ...(details.mediaType ? { mediaType: details.mediaType } : (suggestion.mediaType ? { mediaType: suggestion.mediaType } : {})),
       ...(details.creator ? { creator: details.creator } : {}),
       ...(Number.isFinite(details.productionYear) ? { productionStart: String(details.productionYear), productionEnd: String(details.productionYear) } : {}),
       ...(Number.isFinite(details.settingStart) ? { settingStart: String(details.settingStart) } : {}),
@@ -3321,7 +3440,7 @@ function App() {
 
     setFlight({
       id: entry.id,
-      color: entry.color || null,
+      color: entry.color || colorForMediaType(entry.mediaType),
       startX,
       startY,
       dx: targetX - startX,
@@ -3642,6 +3761,7 @@ function App() {
       mediaType: editDraft.mediaType,
       title: String(editDraft.title || "").trim(),
       creator: String(editDraft.creator || "").trim(),
+      director: String(editDraft.director || "").trim(),
       productionStart: toYear(editDraft.productionStart),
       productionEnd: toYear(editDraft.productionEnd) ?? toYear(editDraft.productionStart),
       settingStart: nextSettingStart,
@@ -3748,7 +3868,8 @@ function App() {
             return {
               ...entry,
               genres: nextGenres,
-              director: meta?.director || entry.creator || "",
+              director: meta?.director || entry.director || entry.creator || "",
+              creator: entry.creator || meta?.director || "",
               isPriority: Boolean(meta?.isPriority) || nextGenres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name))
             };
           });
@@ -3786,7 +3907,8 @@ function App() {
             results[i] = {
               ...entry,
               genres: nextGenres,
-              director: meta?.director || entry.creator || "",
+              director: meta?.director || entry.director || entry.creator || "",
+              creator: entry.creator || meta?.director || "",
               isPriority: Boolean(meta?.isPriority) || nextGenres.some((name) => TMDB_PRIORITY_GENRE_NAMES.has(name))
             };
             done++;
@@ -3940,6 +4062,16 @@ function App() {
       setImportPreview(null);
       return;
     }
+    const invalidSettingInputItem = selectedItems.find(
+      (item) => item.settingRangeInput && getYearRangeInputWarning(item.settingRangeInput)
+    );
+    if (invalidSettingInputItem) {
+      setImportState({
+        phase: "error",
+        message: `Fix Years Covered for "${invalidSettingInputItem.title}" before importing.`
+      });
+      return;
+    }
 
     const prepared = selectedItems
       .map((item) => {
@@ -3953,6 +4085,8 @@ function App() {
 
         return {
           ...item,
+          creator: String(item.creator || item.director || "").trim(),
+          director: String(item.director || "").trim(),
           id: toEntryId(importPreview.source === "goodreads" ? "gr" : "lb"),
           settingStart: Number.isFinite(nextSettingStart) ? Math.min(nextSettingStart, Math.floor(presentYear)) : null,
           settingEnd: Number.isFinite(nextSettingEnd) ? Math.min(nextSettingEnd, Math.floor(presentYear)) : null,
@@ -4105,19 +4239,12 @@ function App() {
   }
 
   function applyManualRange() {
-    let start;
-    let end;
-    const parsedFromRaw = parseYearRangeText(rangeDraft.raw);
-    if (parsedFromRaw) {
-      start = parsedFromRaw.start;
-      end = parsedFromRaw.end;
-    }
-
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      setRangeError("Enter a valid range like 1800-1900.");
+    const parsed = parseYearRangeText(rangeDraft.raw) || parseYearOrRangeInput(rangeDraft.raw);
+    if (!parsed) {
+      setRangeError("Enter a valid range like 1800-1900, 1800s, or 1910s.");
       return;
     }
-    applyRangeLock(start, end);
+    applyRangeLock(parsed.start, parsed.end);
     setShowRangePanel(false);
   }
 
@@ -4129,13 +4256,13 @@ function App() {
       setShowRangeInlineInput(false);
       return;
     }
-    const parsed = parseYearRangeText(raw);
+    const parsed = parseYearRangeText(raw) || parseYearOrRangeInput(raw);
     if (!parsed) {
-      setRangeError("Enter a valid range like 1800-1900.");
+      setRangeError("Enter a valid range like 1800-1900, 1800s, or 1910s.");
       return;
     }
     applyRangeLock(parsed.start, parsed.end);
-    setRangeDraft((current) => ({ ...current, raw }));
+    setRangeDraft((current) => ({ ...current, raw: formatYearOrRangeInput(parsed.start, parsed.end) }));
     setShowRangeInlineInput(false);
   }
 
@@ -4150,7 +4277,7 @@ function App() {
       return;
     }
 
-    const era = HISTORICAL_ERAS.find((item) => item.id === nextEraId);
+    const era = HISTORICAL_ERAS.find((item) => item.id === nextEraId && item.preset !== false);
     if (!era) return;
     setRangeDraft((current) => ({
       ...current,
@@ -4171,6 +4298,7 @@ function App() {
     setQuery("");
     setSearchFocused(false);
     setSearchActiveIndex(-1);
+    setHoveredEntryId(null);
   }
 
   function clearRangeLock() {
@@ -4237,6 +4365,16 @@ function App() {
     const timer = window.setTimeout(updateTocScrollRatio, 40);
     return () => window.clearTimeout(timer);
   }, [showToc, tocGroups.length]);
+
+  useEffect(() => {
+    if (!showToc) return;
+    const list = tocListRef.current;
+    if (list) {
+      list.scrollTop = 0;
+    }
+    setTocScrollRatio(0);
+    showTocScrubHint(450);
+  }, [showToc, tocTypeFilter, tocTagFilter]);
 
   useEffect(() => {
     return () => {
@@ -4362,6 +4500,31 @@ function App() {
               />
               <span className="range-bracket">]</span>
             </form>
+          ) : lockedRange ? (
+            <div className="range-lock-chip range-lock-control">
+              <button
+                type="button"
+                className="range-lock-control-main"
+                onClick={() => toggleMainMenu("range")}
+                data-tip="Edit range"
+              >
+                <span className="range-bracket">[</span>
+                <span>{formatYearOrRangeInput(lockedRange.start, lockedRange.end)}</span>
+                <span className="range-bracket">]</span>
+              </button>
+              <button
+                type="button"
+                className="range-lock-control-close"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  clearRangeLock();
+                }}
+                aria-label="Clear range"
+                data-tip="Clear range"
+              >
+                ×
+              </button>
+            </div>
           ) : (
             <button
               className={`glass-btn range-icon-btn ${lockedRange ? "active" : ""}`}
@@ -4411,6 +4574,7 @@ function App() {
             if (event.key === "Escape") {
               setSearchFocused(false);
               setSearchActiveIndex(-1);
+              setHoveredEntryId(null);
             }
           }}
           placeholder="Search by title, creator, or year…"
@@ -4421,7 +4585,7 @@ function App() {
           </button>
         ) : null}
         {searchFocused && searchSuggestions.length > 0 ? (
-          <div className="top-search-suggestions">
+          <div className="top-search-suggestions" onMouseLeave={() => setHoveredEntryId((current) => (current && hasSearchHoverFocus ? null : current))}>
             {searchSuggestions.map((entry, index) => {
               const isActive = index === searchActiveIndex;
               const markerColor = entry.color || colorForMediaType(entry.mediaType);
@@ -4431,9 +4595,14 @@ function App() {
                   key={`search-s-${entry.id}`}
                   type="button"
                   className={`top-search-suggestion-item ${isActive ? "active" : ""}`}
-                  onMouseEnter={() => setSearchActiveIndex(index)}
+                  onMouseEnter={() => {
+                    setSearchActiveIndex(index);
+                    setHoveredEntryId(entry.id);
+                  }}
+                  onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
+                    setHoveredEntryId(null);
                     setQuery("");
                     setSearchFocused(false);
                     setSearchActiveIndex(-1);
@@ -4604,7 +4773,6 @@ function App() {
                 ×
               </button>
             </div>
-            <p className="hint">SETTING = about the era, PRODUCTION = of the era.</p>
             <form onSubmit={handleAddSubmit}>
             <label>
               Media type
@@ -4619,7 +4787,7 @@ function App() {
             <div className="title-released-row">
               <label className="title-label-wrap">
                 Title
-                <div className="title-search-wrap">
+                <div className="title-search-wrap" ref={titleSearchWrapRef}>
                   <input
                     value={addDraft.title}
                     onChange={(event) => onAddTitleChange(event.target.value)}
@@ -4638,7 +4806,7 @@ function App() {
                           onClick={() => onSelectTitleSuggestion(s)}
                         >
                           <span className="suggestion-label">{s.label}</span>
-                          {s.description ? <span className="suggestion-desc">{s.description}</span> : null}
+                          {s.mediaKindLabel ? <span className="suggestion-desc">{s.mediaKindLabel}</span> : null}
                         </button>
                       ))}
                     </div>
@@ -4822,6 +4990,9 @@ function App() {
                 const toReadItems = isGoodreads ? allMatchingItems.filter(i => i.shelf === "to-read") : [];
 
                 function renderPreviewItem(item) {
+                  const canToggleLetterboxdType =
+                    !isGoodreads && (item.mediaType === "movie" || item.mediaType === "television");
+                  const settingRangeWarning = getYearRangeInputWarning(item.settingRangeInput);
                   return (
                     <div key={item.tempId} className={`import-preview-row ${item.include ? "" : "excluded"}`}>
                       <label className="import-preview-include">
@@ -4854,10 +5025,24 @@ function App() {
                             ×
                           </button>
                         </div>
-                        <small>
-                          {getType(item.mediaType).label}
-                          {item.director ? ` · ${item.director}` : (item.creator ? ` · ${item.creator}` : "")}
-                        </small>
+                        <div className="import-preview-meta-row">
+                          <small>
+                            {getType(item.mediaType).label}
+                            {item.director ? ` · ${item.director}` : (item.creator ? ` · ${item.creator}` : "")}
+                          </small>
+                          {canToggleLetterboxdType ? (
+                            <label className="import-preview-type-toggle">
+                              <span>Type</span>
+                              <select
+                                value={item.mediaType}
+                                onChange={(event) => updateImportPreviewItem(item.tempId, { mediaType: event.target.value })}
+                              >
+                                <option value="movie">Film</option>
+                                <option value="television">TV</option>
+                              </select>
+                            </label>
+                          ) : null}
+                        </div>
                         {item.genres?.length ? (
                           <div className="import-preview-genres">
                             {item.genres.map(g => (
@@ -4873,6 +5058,9 @@ function App() {
                               onChange={(event) => updateImportPreviewItem(item.tempId, { settingRangeInput: event.target.value })}
                               placeholder="leave blank to use Year Published"
                             />
+                            {settingRangeWarning ? (
+                              <span className="import-input-warning">{settingRangeWarning}</span>
+                            ) : null}
                           </label>
                         </div>
                       </div>
@@ -4992,7 +5180,7 @@ function App() {
               >
                 <option value="__all__">ALL TIME</option>
                 <option value="">Custom</option>
-                {HISTORICAL_ERAS.map((era) => (
+                {HISTORICAL_ERAS.filter((era) => era.preset !== false).map((era) => (
                   <option key={era.id} value={era.id}>
                     {era.label} ({era.start}–{era.end})
                   </option>
@@ -5105,6 +5293,10 @@ function App() {
                   <input value={editDraft.creator} onChange={(event) => setEditDraft((current) => ({ ...current, creator: event.target.value }))} />
                 </label>
                 <label>
+                  Director
+                  <input value={editDraft.director ?? ""} onChange={(event) => setEditDraft((current) => ({ ...current, director: event.target.value }))} />
+                </label>
+                <label>
                   Type
                   <select
                     value={editDraft.mediaType}
@@ -5189,6 +5381,9 @@ function App() {
               <div className="detail-readonly">
                 <p><strong>Type:</strong> {getType(selectedEntry.mediaType).label}</p>
                 <p><strong>Creator:</strong> {selectedEntry.creator || "—"}</p>
+                {(selectedEntry.mediaType === "movie" || selectedEntry.mediaType === "television" || selectedEntry.director) ? (
+                  <p><strong>Director:</strong> {selectedEntry.director || "—"}</p>
+                ) : null}
                 <p><strong>PRODUCTION:</strong> {selectedEntry.productionStart ?? "—"} {selectedEntry.productionEnd && selectedEntry.productionEnd !== selectedEntry.productionStart ? `→ ${selectedEntry.productionEnd}` : ""}</p>
                 <p><strong>SETTING:</strong> {selectedEntry.settingStart ?? "—"} {selectedEntry.settingEnd && selectedEntry.settingEnd !== selectedEntry.settingStart ? `→ ${selectedEntry.settingEnd}` : ""}</p>
 
@@ -5320,8 +5515,7 @@ function App() {
 
           {/* Era background zones */}
           {showEras && (() => {
-            const visibleEras = HISTORICAL_ERAS
-              .filter(era => activeEraIds.has(era.id))
+            const visibleEras = visibleTimelineEras
               .map(era => {
                 const x1 = toX(era.start, viewStart, timelineState.span, canvasRect.width);
                 const x2 = toX(era.end, viewStart, timelineState.span, canvasRect.width);
@@ -5415,18 +5609,25 @@ function App() {
           {rangeLines.map((rangeLine) => (
             <g key={`range-${rangeLine.marker.id}`}>
               {(() => {
-                const isActive = hoveredRangeMarkerId === rangeLine.marker.id || selectedEntryId === rangeLine.marker.entryId;
+                const isActive =
+                  hoveredRangeMarkerId === rangeLine.marker.id ||
+                  hoveredEntryId === rangeLine.marker.entryId ||
+                  selectedEntryId === rangeLine.marker.entryId;
+                const spanColor = rangeLine.marker.color || colorForMediaType(rangeLine.marker.mediaType);
                 return (
                   <line
                     x1={rangeLine.marker.xStart}
                     y1={rangeLine.marker.lineY}
                     x2={rangeLine.marker.xEnd}
                     y2={rangeLine.marker.lineY}
-                    stroke={rangeLine.marker.color || "var(--line)"}
-                    strokeWidth={isActive ? "7" : "4"}
+                    stroke={spanColor}
+                    strokeWidth={isActive ? "6" : "4"}
                     strokeLinecap="round"
-                    opacity={isActive ? "0.98" : "0.86"}
-                    style={{ transition: "stroke-width 140ms ease, opacity 140ms ease" }}
+                    opacity={isActive ? "0.98" : "0"}
+                    style={{ transition: "stroke-width 160ms ease, opacity 160ms ease", cursor: "pointer", pointerEvents: "stroke" }}
+                    onMouseEnter={() => setHoveredRangeMarkerId(rangeLine.marker.id)}
+                    onMouseLeave={() => setHoveredRangeMarkerId((current) => (current === rangeLine.marker.id ? null : current))}
+                    onClick={(event) => onRangeLineActivate(rangeLine, event)}
                   />
                 );
               })()}
@@ -5549,7 +5750,8 @@ function App() {
             if (burst === "import") classes.push("burst-import");
             if (burst === "zip") classes.push("burst-zip");
             const isSelected = selectedEntryId === marker.entryId;
-            const isFaded = selectedEntryId && !isSelected;
+            const isSearchHovered = hasSearchHoverFocus && hoveredEntryId === marker.entryId;
+            const isFaded = (selectedEntryId && !isSelected) || (hasSearchHoverFocus && hoveredEntryId && hoveredEntryId !== marker.entryId);
 
             const nodeColor = marker.color || colorForMediaType(marker.mediaType);
             const isWantStatus = entry.status === "want";
@@ -5569,7 +5771,7 @@ function App() {
               >
                 <button
                   type="button"
-                  className={classes.join(" ")}
+                  className={`${classes.join(" ")}${isSearchHovered ? " search-hover" : ""}`}
                   style={isWantStatus ? { background: "white", border: `2px solid ${nodeColor}` } : { background: nodeColor }}
                   onMouseEnter={() => {
                     setHoveredEntryId(marker.entryId);
@@ -5786,10 +5988,10 @@ function App() {
               type="button"
               className="timeline-edge-expand-btn left"
               style={{ top: `${timelineEdgeButtonY}px` }}
-              onClick={() => openRangePanelFromEdge("left")}
-              title="Expand earlier years"
+              onClick={() => (lockedRange ? clearRangeLock() : openRangePanelFromEdge("left"))}
+              title={lockedRange ? "Clear range lock" : "Expand earlier years"}
             >
-              +
+              {lockedRange ? "×" : "+"}
             </button>
           ) : null}
 
@@ -5798,10 +6000,10 @@ function App() {
               type="button"
               className="timeline-edge-expand-btn right"
               style={{ top: `${timelineEdgeButtonY}px` }}
-              onClick={() => openRangePanelFromEdge("right")}
-              title="Expand later years"
+              onClick={() => (lockedRange ? clearRangeLock() : openRangePanelFromEdge("right"))}
+              title={lockedRange ? "Clear range lock" : "Expand later years"}
             >
-              +
+              {lockedRange ? "×" : "+"}
             </button>
           ) : null}
         </div>
@@ -5858,8 +6060,8 @@ function App() {
             })()}
           </svg>
         ) : null}
-        {showEras && hoveredEraId && canvasRef.current ? (() => {
-          const era = HISTORICAL_ERAS.find(e => e.id === hoveredEraId);
+          {showEras && hoveredEraId && canvasRef.current ? (() => {
+          const era = visibleTimelineEras.find(e => e.id === hoveredEraId) || HISTORICAL_ERAS.find(e => e.id === hoveredEraId);
           if (!era) return null;
           const rect = canvasRef.current.getBoundingClientRect();
           const x1Px = rect.left + toX(era.start, viewStart, timelineState.span, canvasRect.width);
@@ -5934,7 +6136,7 @@ function App() {
               return (
                 <g>
                   {/* Era bands on Y axis (setting eras) */}
-                  {HISTORICAL_ERAS.filter(era => activeEraIds.has(era.id)).map(era => {
+                  {visibleTimelineEras.map(era => {
                     const y1 = toSY(Math.min(era.end, scatterBounds.maxY));
                     const y2 = toSY(Math.max(era.start, scatterBounds.minY));
                     if (y2 < margin.top || y1 > margin.top + h) return null;

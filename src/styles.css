@@ -426,10 +426,15 @@ html, body, #root {
   text-transform: uppercase;
 }
 .range-lock-control-main {
+  border: none;
+  background: transparent;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   gap: 7px;
   white-space: nowrap;
+  color: inherit;
+  cursor: pointer;
 }
 .range-lock-control-main svg {
   width: 14px;
@@ -1302,6 +1307,29 @@ html, body, #root {
   color: var(--muted);
   font-size: 0.72rem;
 }
+.import-preview-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.import-preview-type-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.import-preview-type-toggle select {
+  border: 1px solid var(--stroke-med);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 3px 6px;
+}
 .import-preview-genres {
   display: flex;
   flex-wrap: wrap;
@@ -1345,6 +1373,12 @@ html, body, #root {
   font-size: 0.64rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+.import-input-warning {
+  color: #bf3a2a;
+  font-size: 0.63rem;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 .import-preview-setting-grid input {
   border: 1px solid var(--stroke-med);
@@ -1897,6 +1931,14 @@ html, body, #root {
   box-shadow: var(--shadow-sm);
 }
 .node:hover { transform: translate3d(-50%, -50%, 0) scale(1.22); }
+.node.search-hover {
+  transform: translate3d(-50%, -50%, 0) scale(1.28);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--bg) 72%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--text) 28%, transparent),
+    var(--shadow-md);
+  z-index: 3;
+}
 .node.end-cap { width: 9px; height: 9px; border-width: 1.5px; }
 .node-label {
   position: absolute;
