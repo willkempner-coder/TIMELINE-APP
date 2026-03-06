@@ -1694,7 +1694,7 @@ function App() {
   const [preZoomState, setPreZoomState] = useState(null); // saved zoom state before node click
   const preZoomStateRef = useRef(null);
 
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
   const [inlineNotesOpen, setInlineNotesOpen] = useState(false);
   const [inlineNotesDraft, setInlineNotesDraft] = useState("");
   const [addingTag, setAddingTag] = useState(false);
