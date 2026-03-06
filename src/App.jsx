@@ -359,6 +359,9 @@ function fromGoodreadsCsv(csvText) {
       const settingConfidence = hasHeuristicSetting ? 0.18 : fallbackSetting ? 0.12 : null;
       const settingAuto = hasHeuristicSetting || fallbackSetting;
 
+      const shelf = (row["Exclusive Shelf"] || "").trim().toLowerCase();
+      const isToRead = shelf === "to-read";
+
       return {
         id: toEntryId("gr"),
         mediaType: "book",
@@ -373,7 +376,9 @@ function fromGoodreadsCsv(csvText) {
         settingConfidence,
         settingAuto,
         settingUserLocked: false,
-        inferenceStatus: "idle"
+        inferenceStatus: "idle",
+        status: isToRead ? "want" : "consumed",
+        shelf
       };
     })
     .filter(Boolean);
@@ -382,9 +387,8 @@ function fromGoodreadsCsv(csvText) {
 async function fromLetterboxdZip(arrayBuffer) {
   const zip = await JSZip.loadAsync(arrayBuffer);
 
-  const diary = zip.file("diary.csv");
   const watched = zip.file("watched.csv");
-  const sourceFile = diary || watched;
+  const sourceFile = watched;
   if (!sourceFile) return [];
 
   const csvText = await sourceFile.async("string");
@@ -683,7 +687,6 @@ function getCenturyPeriod(year) {
 function formatClusterLabel(item) {
   if (!item) return "";
   const size = item.size ?? (item.markers?.length ?? 0);
-  const suffix = size > 0 ? ` (${size})` : "";
 
   if (!Number.isFinite(item.year)) return `${size} items`;
 
@@ -695,7 +698,7 @@ function formatClusterLabel(item) {
     const representativeYear = years.length > 0 ? (Math.min(...years) + Math.max(...years)) / 2 : item.year;
     const period = getCenturyPeriod(representativeYear);
     const centuryLabel = getOrdinalCentury(representativeYear);
-    return centuryLabel ? `${period} ${centuryLabel}${suffix}` : `${size} items`;
+    return centuryLabel ? `${period} ${centuryLabel}` : `${size} items`;
   }
 
   if (resolution === "decade") {
@@ -706,11 +709,22 @@ function formatClusterLabel(item) {
     const avgY = (minY + maxY) / 2;
     const period = getCenturyPeriod(avgY);
     const centuryLabel = getOrdinalCentury(avgY);
-    return centuryLabel ? `${period} ${centuryLabel}${suffix}` : `${Math.floor(item.year / 10) * 10}s${suffix}`;
+    return centuryLabel ? `${period} ${centuryLabel}` : `${Math.floor(item.year / 10) * 10}s`;
   }
 
   // year resolution
-  return `${Math.round(item.year)}${suffix}`;
+  return `${Math.round(item.year)}`;
+}
+
+function formatClusterTypeBreakdown(item) {
+  if (!item?.markers?.length) return "";
+  const counts = {};
+  for (const m of item.markers) {
+    counts[m.mediaType] = (counts[m.mediaType] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([type, count]) => `${count} ${MEDIA_TYPE_PLURALS[type] || type}`)
+    .join(" · ");
 }
 
 function formatTypeClusterLabel(group, expandedCluster) {
@@ -1028,6 +1042,32 @@ async function inferFromOpenLibrary(entry, presentYear) {
   }
 
   return null;
+}
+
+// TMDB genre IDs that indicate historically-set or documentary content
+const TMDB_PRIORITY_GENRE_IDS = new Set([99, 36, 10752]); // Documentary, History, War
+const TMDB_PRIORITY_GENRE_NAMES = new Set(["Documentary", "History", "War"]);
+
+async function fetchTmdbFilmMeta(title, year) {
+  if (!TMDB_API_KEY) return null;
+  try {
+    const searchParams = new URLSearchParams({ api_key: TMDB_API_KEY, query: title, language: "en-US", include_adult: "false" });
+    if (year) searchParams.set("year", String(year));
+    const search = await fetchJson(`https://api.themoviedb.org/3/search/movie?${searchParams.toString()}`);
+    const result = search?.results?.[0];
+    if (!result?.id) return null;
+
+    const detailParams = new URLSearchParams({ api_key: TMDB_API_KEY, language: "en-US", append_to_response: "credits" });
+    const detail = await fetchJson(`https://api.themoviedb.org/3/movie/${result.id}?${detailParams.toString()}`);
+    if (!detail) return null;
+
+    const genres = (detail.genres || []).map(g => g.name);
+    const director = detail.credits?.crew?.find(c => c.job === "Director")?.name || "";
+    const isPriority = (detail.genres || []).some(g => TMDB_PRIORITY_GENRE_IDS.has(g.id));
+    return { genres, director, isPriority, tmdbId: result.id };
+  } catch {
+    return null;
+  }
 }
 
 async function inferFromTmdb(entry, presentYear) {
@@ -1872,6 +1912,14 @@ function App() {
     if (hoveredTimelineLabel) return hoveredTimelineLabel;
     return "";
   }, [entries, hoveredBranchLabel, hoveredClusterId, hoveredEntryId, hoveredTimelineLabel, visibleRenderItems]);
+
+  const hoveredSubline = useMemo(() => {
+    if (hoveredClusterId) {
+      const cluster = visibleRenderItems.find((item) => item.type === "cluster" && item.id === hoveredClusterId);
+      if (cluster) return formatClusterTypeBreakdown(cluster);
+    }
+    return "";
+  }, [hoveredClusterId, visibleRenderItems]);
 
   const baseRenderedUnits = useMemo(() => countRenderUnits(visibleRenderItems, timelineState.span), [timelineState.span, visibleRenderItems]);
 
@@ -3106,6 +3154,41 @@ function App() {
       return;
     }
 
+    // For Letterboxd imports: enrich with TMDB genres + director, then sort
+    if (source === "letterboxd" && TMDB_API_KEY) {
+      setImportState({ phase: "analyzing", message: `Fetching film data (0/${imported.length})…` });
+      const CONCURRENCY = 4;
+      let done = 0;
+      async function enrichBatch(entries) {
+        const results = new Array(entries.length);
+        async function worker(i) {
+          const entry = entries[i];
+          const meta = await fetchTmdbFilmMeta(entry.title, entry.productionStart);
+          results[i] = meta ? { ...entry, genres: meta.genres, director: meta.director, isPriority: meta.isPriority } : entry;
+          done++;
+          setImportState({ phase: "analyzing", message: `Fetching film data (${done}/${entries.length})…` });
+        }
+        const queue = entries.map((_, i) => i);
+        async function runWorkers() {
+          while (queue.length > 0) {
+            const batch = queue.splice(0, CONCURRENCY);
+            await Promise.all(batch.map(worker));
+          }
+        }
+        await runWorkers();
+        return results;
+      }
+      imported = await enrichBatch(imported);
+
+      // Sort: Documentary/History/War first, then alphabetically
+      imported.sort((a, b) => {
+        const ap = a.isPriority ? 0 : 1;
+        const bp = b.isPriority ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+    }
+
     setImportPreview({
       source,
       fileName: importFile?.name || "",
@@ -3139,6 +3222,16 @@ function App() {
       return {
         ...current,
         items: current.items.map((item) => ({ ...item, include }))
+      };
+    });
+  }
+
+  function setImportPreviewIncludeShelf(shelf, include) {
+    setImportPreview((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        items: current.items.map((item) => (item.shelf === shelf ? { ...item, include } : item))
       };
     });
   }
@@ -3613,7 +3706,12 @@ function App() {
           </div>
         ) : null}
       </div>
-      {hoveredHeadline ? <div className="hover-headline">{hoveredHeadline}</div> : null}
+      {hoveredHeadline ? (
+        <div className="hover-headline">
+          {hoveredHeadline}
+          {hoveredSubline ? <span className="hover-subline">{hoveredSubline}</span> : null}
+        </div>
+      ) : null}
 
       {/* TOC panel with decade grouping */}
       {showToc ? (
@@ -3795,40 +3893,15 @@ function App() {
             <div className="year-fields">
               <div className="year-field-row">
                 <label>
-                  PRODUCTION year
-                  <input
-                    value={addDraft.productionStart}
-                    onChange={(event) => setAddField("productionStart", event.target.value)}
-                    inputMode="numeric"
-                    placeholder="2019"
-                  />
-                </label>
-                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowProdEnd(v => !v)} aria-label="Toggle production end year">
-                  {addShowProdEnd ? "−" : "→"}
-                </button>
-                {addShowProdEnd ? (
-                  <label>
-                    End year
-                    <input
-                      value={addDraft.productionEnd}
-                      onChange={(event) => setAddField("productionEnd", event.target.value)}
-                      inputMode="numeric"
-                      placeholder="2020"
-                    />
-                  </label>
-                ) : null}
-              </div>
-              <div className="year-field-row">
-                <label>
-                  SETTING year
+                  Years Covered
                   <input
                     value={addDraft.settingStart}
                     onChange={(event) => setAddField("settingStart", event.target.value)}
                     inputMode="numeric"
-                    placeholder="1940s"
+                    placeholder="e.g. 1940"
                   />
                 </label>
-                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle setting end year">
+                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle end year">
                   {addShowSetEnd ? "−" : "→"}
                 </button>
                 {addShowSetEnd ? (
@@ -3912,52 +3985,99 @@ function App() {
             </div>
 
             <div className="import-preview-list">
-              {importPreview.items.map((item) => (
-                <div key={item.tempId} className={`import-preview-row ${item.include ? "" : "excluded"}`}>
-                  <label className="import-preview-include">
-                    <input
-                      type="checkbox"
-                      checked={item.include}
-                      onChange={(event) => updateImportPreviewItem(item.tempId, { include: event.target.checked })}
-                    />
-                  </label>
-                  <div className="import-preview-main">
-                    <div className="import-preview-title-row">
-                      <span className="import-preview-dot" style={{ background: item.color || colorForMediaType(item.mediaType) }} />
-                      <strong>{item.title}</strong>
-                      <button
-                        type="button"
-                        className="import-preview-remove"
-                        onClick={() => removeImportPreviewItem(item.tempId)}
-                        title="Remove from import"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <small>{getType(item.mediaType).label}{item.creator ? ` · ${item.creator}` : ""} · P {item.productionStart ?? "?"}{item.productionEnd && item.productionEnd !== item.productionStart ? `–${item.productionEnd}` : ""}</small>
-                    <div className="import-preview-setting-grid">
-                      <label>
-                        SETTING start
+              {(() => {
+                const isGoodreads = importPreview.source === "goodreads";
+                const readItems = isGoodreads ? importPreview.items.filter(i => i.shelf !== "to-read") : importPreview.items;
+                const toReadItems = isGoodreads ? importPreview.items.filter(i => i.shelf === "to-read") : [];
+
+                function renderPreviewItem(item) {
+                  return (
+                    <div key={item.tempId} className={`import-preview-row ${item.include ? "" : "excluded"}`}>
+                      <label className="import-preview-include">
                         <input
-                          value={item.settingStartInput}
-                          onChange={(event) => updateImportPreviewItem(item.tempId, { settingStartInput: event.target.value })}
-                          placeholder="year"
-                          inputMode="numeric"
+                          type="checkbox"
+                          checked={item.include}
+                          onChange={(event) => updateImportPreviewItem(item.tempId, { include: event.target.checked })}
                         />
                       </label>
-                      <label>
-                        SETTING end
-                        <input
-                          value={item.settingEndInput}
-                          onChange={(event) => updateImportPreviewItem(item.tempId, { settingEndInput: event.target.value })}
-                          placeholder="year"
-                          inputMode="numeric"
-                        />
-                      </label>
+                      <div className="import-preview-main">
+                        <div className="import-preview-title-row">
+                          <span className="import-preview-dot" style={{ background: item.color || colorForMediaType(item.mediaType) }} />
+                          <strong>{item.title}</strong>
+                          <button
+                            type="button"
+                            className="import-preview-remove"
+                            onClick={() => removeImportPreviewItem(item.tempId)}
+                            title="Remove from import"
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <small>
+                          {getType(item.mediaType).label}
+                          {item.director ? ` · ${item.director}` : (item.creator ? ` · ${item.creator}` : "")}
+                          {item.productionStart ? ` · ${item.productionStart}` : ""}
+                        </small>
+                        {item.genres?.length ? (
+                          <div className="import-preview-genres">
+                            {item.genres.map(g => (
+                              <span key={g} className={`import-genre-tag ${TMDB_PRIORITY_GENRE_NAMES.has(g) ? "priority" : ""}`}>{g}</span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="import-preview-setting-grid">
+                          <label>
+                            Setting start
+                            <input
+                              value={item.settingStartInput}
+                              onChange={(event) => updateImportPreviewItem(item.tempId, { settingStartInput: event.target.value })}
+                              placeholder="year"
+                              inputMode="numeric"
+                            />
+                          </label>
+                          <label>
+                            End
+                            <input
+                              value={item.settingEndInput}
+                              onChange={(event) => updateImportPreviewItem(item.tempId, { settingEndInput: event.target.value })}
+                              placeholder="year"
+                              inputMode="numeric"
+                            />
+                          </label>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  );
+                }
+
+                if (!isGoodreads) {
+                  return readItems.map(renderPreviewItem);
+                }
+
+                return (
+                  <>
+                    {readItems.length > 0 && (
+                      <>
+                        <div className="import-section-header">
+                          <span>Read ({readItems.length})</span>
+                          <button type="button" onClick={() => setImportPreview(cur => cur ? { ...cur, items: cur.items.map(i => i.shelf !== "to-read" ? { ...i, include: true } : i) } : cur)} className="import-section-btn">Select all</button>
+                        </div>
+                        {readItems.map(renderPreviewItem)}
+                      </>
+                    )}
+                    {toReadItems.length > 0 && (
+                      <>
+                        <div className="import-section-header import-section-want">
+                          <span>To-Read ({toReadItems.length})</span>
+                          <small className="import-section-hint">Will be marked as to-do</small>
+                          <button type="button" onClick={() => setImportPreviewIncludeShelf("to-read", true)} className="import-section-btn">Select all</button>
+                        </div>
+                        {toReadItems.map(renderPreviewItem)}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             <div className="import-preview-actions">
@@ -4487,6 +4607,43 @@ function App() {
               </>
             );
           })()}
+
+          {/* Branch connector lines — rendered here so they sit inside the main SVG coordinate space */}
+          {expandedCluster && mode !== MODE_BOTH ? (() => {
+            const branchLane = expandedCluster.lane;
+            const baseY = lanes[branchLane] ?? canvasRect.height / 2;
+            const baseX = expandedCluster.x;
+            const typeGroups = expandedBranchData.groups;
+            const isSingleType = expandedBranchData.isSingleType;
+            const activeGroup = expandedBranchData.activeGroup;
+            const activeEntries = expandedBranchData.activeEntries;
+            const gSpacing = 46;
+            const iSpacing = 24;
+            const groupY = branchLane === MODE_PRODUCTION ? baseY - 84 : baseY + 84;
+            const detailY = branchLane === MODE_PRODUCTION ? groupY - 70 : groupY + 70;
+            const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
+            const allSingleItems = typeGroups.filter((g) => g.items.length === 1).flatMap((g) => g.items);
+            const directEntries = isSingleType ? (activeGroup?.items || []) : [];
+            const activeGroupIndex = activeGroup ? typeGroups.findIndex((g) => g.mediaType === activeGroup.mediaType) : -1;
+            const activeGroupX = activeGroupIndex >= 0 ? spreadX(baseX, activeGroupIndex, typeGroups.length, gSpacing) : baseX;
+            const lineProps = { stroke: "var(--stroke-strong)", strokeWidth: "1", opacity: "0.5", strokeLinecap: "round" };
+            return (
+              <g className="branch-connectors" pointerEvents="none">
+                {!isSingleType && multiItemGroups.map((group, i) => (
+                  <line key={`cl-g-${group.mediaType}`} x1={baseX} y1={baseY} x2={spreadX(baseX, i, multiItemGroups.length, gSpacing)} y2={groupY} {...lineProps} />
+                ))}
+                {!isSingleType && allSingleItems.map((item, i) => (
+                  <line key={`cl-s-${item.entry.id}`} x1={baseX} y1={baseY} x2={spreadX(baseX, i, allSingleItems.length, gSpacing)} y2={groupY} {...lineProps} />
+                ))}
+                {!isSingleType && activeEntries.map((item, i) => (
+                  <line key={`cl-e-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={spreadX(activeGroupX, i, activeEntries.length, iSpacing)} y2={detailY} {...lineProps} />
+                ))}
+                {isSingleType && directEntries.map((item, i) => (
+                  <line key={`cl-d-${item.entry.id}`} x1={baseX} y1={baseY} x2={spreadX(baseX, i, directEntries.length, iSpacing)} y2={groupY} {...lineProps} />
+                ))}
+              </g>
+            );
+          })() : null}
         </svg>
 
         <div className="nodes-layer">
@@ -4508,10 +4665,7 @@ function App() {
                   onMouseEnter={() => setHoveredClusterId(item.id)}
                   onMouseLeave={() => setHoveredClusterId((current) => (current === item.id ? null : current))}
                   onClick={() => onClusterSingleClick(item)}
-                  title={`${item.size} items`}
-                >
-                  {item.size}
-                </button>
+                />
               );
             }
 
@@ -4640,33 +4794,6 @@ function App() {
 
                 return (
                   <>
-                    {/* Connector lines from cluster → branch nodes */}
-                    <svg
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible", zIndex: 0 }}
-                      aria-hidden="true"
-                    >
-                      {/* cluster → multi-item type groups */}
-                      {!isSingleType && multiItemGroups.map((group, index) => {
-                        const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
-                        return <line key={`cl-g-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
-                      })}
-                      {/* cluster → single-item direct nodes */}
-                      {!isSingleType && allSingleItems.map((item, index) => {
-                        const x = spreadX(baseX, index, allSingleItems.length, groupSpacing);
-                        return <line key={`cl-s-${item.entry.id}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
-                      })}
-                      {/* active type group → individual entries */}
-                      {!isSingleType && activeEntries.map((item, index) => {
-                        const x = spreadX(activeGroupX, index, activeEntries.length, itemSpacing);
-                        return <line key={`cl-e-${item.entry.id}`} x1={activeGroupX} y1={groupY} x2={x} y2={detailY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
-                      })}
-                      {/* cluster → direct entries (single-type case) */}
-                      {isSingleType && directEntries.map((item, index) => {
-                        const x = spreadX(baseX, index, directEntries.length, itemSpacing);
-                        return <line key={`cl-d-${item.entry.id}`} x1={baseX} y1={baseY} x2={x} y2={groupY} stroke="var(--stroke-strong)" strokeWidth="1" opacity="0.45" />;
-                      })}
-                    </svg>
-
                     {multiItemGroups.map((group, index) => {
                       if (isSingleType) return null;
                       const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
