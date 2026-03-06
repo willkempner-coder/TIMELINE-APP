@@ -970,6 +970,8 @@ html, body, #root {
 
 .import-box { display: grid; gap: 7px; }
 .import-status { margin: 0; color: var(--text-secondary); font-size: 0.75rem; }
+.import-status.error { color: #bf3a2a; }
+.import-status.done { color: #3f6f52; }
 .import-hidden-input { display: none; }
 .import-source-logos {
   display: flex;
@@ -1969,6 +1971,55 @@ html, body, #root {
   user-select: none;
   -webkit-user-select: none;
 }
+
+.import-progress-hud {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 120px;
+  z-index: 34;
+  width: min(420px, calc(100vw - 220px));
+  border: 1px solid var(--stroke-med);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(6px);
+  padding: 9px 10px 8px;
+  display: grid;
+  gap: 6px;
+  pointer-events: none;
+}
+.import-progress-label {
+  font-size: 0.69rem;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.import-progress-track {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--stroke-med) 70%, transparent);
+}
+.import-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 72%, transparent);
+  transition: width 140ms ease;
+}
+.import-progress-fill.indeterminate {
+  position: absolute;
+  width: 28%;
+  left: -30%;
+  animation: import-progress-sweep 1s linear infinite;
+}
+@keyframes import-progress-sweep {
+  0% { left: -30%; }
+  100% { left: 102%; }
+}
 .overview-resize-grip {
   width: 48px; height: 4px;
   border-radius: 999px;
@@ -2076,6 +2127,7 @@ html, body, #root {
   .add-sheet, .settings-sheet, .range-sheet { width: 300px; }
   .cluster-grid-sheet { width: calc(100vw - 24px); left: 12px; transform: none; }
   .overview-navigator-wrap { width: min(560px, calc(100vw - 200px)); left: 50%; transform: translateX(-50%); }
+  .import-progress-hud { width: min(360px, calc(100vw - 56px)); bottom: 114px; }
   .toc-panel { width: min(340px, 90vw); }
   .year-grid.compact { grid-template-columns: 1fr; }
   .detail-actions { grid-template-columns: 1fr; }

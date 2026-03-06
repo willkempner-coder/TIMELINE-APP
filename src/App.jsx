@@ -892,7 +892,7 @@ async function fetchJson(url, timeout = 7000) {
   }
 }
 
-async function fetchText(url, timeout = 7000) {
+async function fetchText(url, timeout = 3500) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeout);
 
@@ -1163,15 +1163,18 @@ function extractLetterboxdAttributeTexts(content, attribute) {
   return Array.from(new Set(fromMarkdown));
 }
 
-async function fetchLetterboxdPageText(uri) {
+async function fetchLetterboxdPageText(uri, options = {}) {
+  const { fastMode = false } = options;
   const normalized = normalizeLetterboxdUri(uri);
   if (!normalized) return null;
 
-  const fromAllOrigins = await fetchText(`https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`, 6500);
+  const fromAllOrigins = await fetchText(`https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`, fastMode ? 2200 : 3500);
   if (typeof fromAllOrigins === "string" && fromAllOrigins.length > 100) return fromAllOrigins;
 
+  if (fastMode) return null;
+
   const noScheme = normalized.replace(/^https?:\/\//i, "");
-  const fromJina = await fetchText(`https://r.jina.ai/http://${noScheme}`, 7000);
+  const fromJina = await fetchText(`https://r.jina.ai/http://${noScheme}`, 3200);
   if (typeof fromJina === "string" && fromJina.length > 100) return fromJina;
 
   return null;
@@ -1308,8 +1311,9 @@ async function fetchFilmMetaWithFallback(title, year) {
   return fetchWikidataFilmMeta(title, year);
 }
 
-async function fetchLetterboxdPageMeta(letterboxdUri) {
-  const pageText = await fetchLetterboxdPageText(letterboxdUri);
+async function fetchLetterboxdPageMeta(letterboxdUri, options = {}) {
+  if (!letterboxdUri) return null;
+  const pageText = await fetchLetterboxdPageText(letterboxdUri, options);
   if (!pageText) return null;
   const genres = extractLetterboxdAttributeTexts(pageText, "genre");
   const directors = extractLetterboxdAttributeTexts(pageText, "director");
@@ -1323,8 +1327,8 @@ async function fetchLetterboxdPageMeta(letterboxdUri) {
   };
 }
 
-async function fetchLetterboxdFilmMetaWithFallback(entry) {
-  const fromLetterboxd = await fetchLetterboxdPageMeta(entry.letterboxdUri);
+async function fetchLetterboxdFilmMetaWithFallback(entry, options = {}) {
+  const fromLetterboxd = await fetchLetterboxdPageMeta(entry.letterboxdUri, options);
   if (fromLetterboxd) return fromLetterboxd;
   return fetchFilmMetaWithFallback(entry.title, entry.productionStart);
 }
@@ -1430,6 +1434,7 @@ function App() {
   const [showEras, setShowEras] = useState(false);
   const [showAllMapTypes, setShowAllMapTypes] = useState(false);
   const [tocTagFilter, setTocTagFilter] = useState(null);
+  const [tocScrollRatio, setTocScrollRatio] = useState(0);
   const [hoveredEraId, setHoveredEraId] = useState(null);
   const [hoveredTimelineLabel, setHoveredTimelineLabel] = useState("");
   const [hoveredBranchLabel, setHoveredBranchLabel] = useState("");
@@ -1532,6 +1537,9 @@ function App() {
   const zoomDragRef = useRef(null);
   const searchWrapRef = useRef(null);
   const tocPanelRef = useRef(null);
+  const tocListRef = useRef(null);
+  const tocRailRef = useRef(null);
+  const tocDragRef = useRef({ active: false });
   const addSheetRef = useRef(null);
   const settingsSheetRef = useRef(null);
   const importPreviewRef = useRef(null);
@@ -1767,6 +1775,47 @@ function App() {
     });
   }, [entries, tocTagFilter]);
 
+  const tocGroups = useMemo(() => {
+    const getYear = (entry) => entry.settingStart ?? entry.settingEnd ?? entry.productionStart;
+    const grouped = new Map();
+
+    for (const entry of tocEntries) {
+      if (tocTypeFilter !== null && entry.mediaType !== tocTypeFilter) continue;
+      const year = getYear(entry);
+      const decade = Number.isFinite(year) ? Math.floor(year / 10) * 10 : null;
+      const key = decade !== null ? `${decade}s` : "Unknown";
+      if (!grouped.has(key)) grouped.set(key, { label: key, decade, entries: [] });
+      grouped.get(key).entries.push(entry);
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      if (a.decade === null) return 1;
+      if (b.decade === null) return -1;
+      return b.decade - a.decade;
+    });
+  }, [tocEntries, tocTypeFilter]);
+
+  const tocCenturyStops = useMemo(() => {
+    if (tocGroups.length === 0) return [];
+    const byCentury = new Map();
+
+    tocGroups.forEach((group, index) => {
+      if (!Number.isFinite(group.decade)) return;
+      const century = Math.floor(group.decade / 100) * 100;
+      if (!byCentury.has(century)) byCentury.set(century, index);
+    });
+
+    return Array.from(byCentury.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([century, index]) => ({
+        key: `${century}`,
+        century,
+        label: `${century}s`,
+        index,
+        ratio: tocGroups.length <= 1 ? 0 : index / (tocGroups.length - 1)
+      }));
+  }, [tocGroups]);
+
   const viewEnd = clamp(timelineState.end, -100000, 100000);
   const viewStart = viewEnd - timelineState.span;
   const visibleRangeLabel = useMemo(
@@ -1921,6 +1970,17 @@ function App() {
     if (!importPreview) return 0;
     return importPreview.items.reduce((count, item) => count + (item.include ? 1 : 0), 0);
   }, [importPreview]);
+
+  const importProgressHud = useMemo(() => {
+    if (importState.phase !== "analyzing" && importState.phase !== "deploying") return null;
+    const message = String(importState.message || (importState.phase === "deploying" ? "Importing…" : "Analyzing…"));
+    const match = message.match(/\((\d+)\s*\/\s*(\d+)\)/);
+    if (!match) return { message, progress: null };
+    const done = Number(match[1]);
+    const total = Number(match[2]);
+    if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return { message, progress: null };
+    return { message, progress: clamp((done / total) * 100, 0, 100) };
+  }, [importState.message, importState.phase]);
 
   const letterboxdGenreGroups = useMemo(() => {
     if (!importPreview || importPreview.source !== "letterboxd") return [];
@@ -3520,19 +3580,30 @@ function App() {
 
     // For Letterboxd imports: enrich with TMDB first, then Wikidata fallback for genre + director.
     if (importSource === "letterboxd") {
+      const isLargeImport = imported.length >= 500;
+      const metaCache = new Map();
       setImportState({
         phase: "analyzing",
         message: TMDB_API_KEY
           ? `Fetching Letterboxd/TMDB film data (0/${imported.length})…`
           : `Fetching Letterboxd/Wikidata film data (0/${imported.length})…`
       });
-      const CONCURRENCY = 4;
+      const CONCURRENCY = isLargeImport ? 16 : 10;
       let done = 0;
       async function enrichBatch(entries) {
         const results = new Array(entries.length);
         async function worker(i) {
           const entry = entries[i];
-          const meta = await fetchLetterboxdFilmMetaWithFallback(entry);
+          const cacheKey = [
+            normalizeSearchText(entry.title || ""),
+            Number.isFinite(entry.productionStart) ? entry.productionStart : "",
+            normalizeLetterboxdUri(entry.letterboxdUri || "")
+          ].join("|");
+          let meta = metaCache.get(cacheKey);
+          if (meta === undefined) {
+            meta = await fetchLetterboxdFilmMetaWithFallback(entry, { fastMode: isLargeImport });
+            metaCache.set(cacheKey, meta || null);
+          }
           results[i] = meta ? { ...entry, genres: meta.genres, director: meta.director, isPriority: meta.isPriority } : entry;
           done++;
           setImportState({ phase: "analyzing", message: `Fetching film data (${done}/${entries.length})…` });
@@ -3898,6 +3969,63 @@ function App() {
     setRangeError("");
     setShowRangePanel(false);
   }
+
+  function updateTocScrollRatio() {
+    const list = tocListRef.current;
+    if (!list) return;
+    const maxScroll = Math.max(1, list.scrollHeight - list.clientHeight);
+    setTocScrollRatio(clamp(list.scrollTop / maxScroll, 0, 1));
+  }
+
+  function scrubTocToClientY(clientY) {
+    const rail = tocRailRef.current;
+    const list = tocListRef.current;
+    if (!rail || !list) return;
+    const rect = rail.getBoundingClientRect();
+    const ratio = clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    list.scrollTop = ratio * maxScroll;
+  }
+
+  function onTocRailPointerMove(event) {
+    if (!tocDragRef.current.active) return;
+    event.preventDefault();
+    scrubTocToClientY(event.clientY);
+  }
+
+  function onTocRailPointerUp() {
+    tocDragRef.current.active = false;
+    window.removeEventListener("pointermove", onTocRailPointerMove);
+    window.removeEventListener("pointerup", onTocRailPointerUp);
+  }
+
+  function onTocRailPointerDown(event) {
+    event.preventDefault();
+    tocDragRef.current.active = true;
+    scrubTocToClientY(event.clientY);
+    window.addEventListener("pointermove", onTocRailPointerMove);
+    window.addEventListener("pointerup", onTocRailPointerUp);
+  }
+
+  function jumpTocToRatio(ratio) {
+    const list = tocListRef.current;
+    if (!list) return;
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    list.scrollTop = clamp(ratio, 0, 1) * maxScroll;
+  }
+
+  useEffect(() => {
+    if (!showToc) return;
+    const timer = window.setTimeout(updateTocScrollRatio, 40);
+    return () => window.clearTimeout(timer);
+  }, [showToc, tocGroups.length]);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", onTocRailPointerMove);
+      window.removeEventListener("pointerup", onTocRailPointerUp);
+    };
+  }, []);
 
   return (
     <div className="timeline-app" data-theme={darkMode ? "dark" : "light"}>
@@ -4407,7 +4535,9 @@ function App() {
                 accept=".zip,application/zip"
                 onChange={(event) => onImportFileSelected(event, "letterboxd")}
               />
-              {importState.phase !== "idle" ? <p className="import-status">{importState.message}</p> : null}
+              {importState.phase === "error" || importState.phase === "done" ? (
+                <p className={`import-status ${importState.phase === "error" ? "error" : "done"}`}>{importState.message}</p>
+              ) : null}
             </div>
           </aside>
         </div>
@@ -5623,6 +5753,18 @@ function App() {
             <span>↗ Future (set later than made)</span>
           </div>
         </section>
+      ) : null}
+
+      {importProgressHud ? (
+        <div className="import-progress-hud" aria-live="polite">
+          <div className="import-progress-label">{importProgressHud.message}</div>
+          <div className="import-progress-track">
+            <div
+              className={`import-progress-fill ${importProgressHud.progress === null ? "indeterminate" : ""}`}
+              style={importProgressHud.progress === null ? undefined : { width: `${importProgressHud.progress}%` }}
+            />
+          </div>
+        </div>
       ) : null}
 
       <section className="overview-navigator-wrap">
