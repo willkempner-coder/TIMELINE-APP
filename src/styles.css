@@ -1016,6 +1016,10 @@ html, body, #root {
 .import-logo-btn .lb-dot-1 { left: 10px; background: #ff8500; }
 .import-logo-btn .lb-dot-2 { left: 17px; background: #00e054; }
 .import-logo-btn .lb-dot-3 { left: 24px; background: #40bcff; }
+.import-logo-btn[data-tip]::after {
+  left: 0;
+  transform: none;
+}
 .import-preview-sheet {
   position: absolute;
   left: 50%;
@@ -2060,7 +2064,7 @@ html, body, #root {
   .detail-sheet { width: 300px; }
   .add-sheet, .settings-sheet, .range-sheet { width: 300px; }
   .cluster-grid-sheet { width: calc(100vw - 24px); left: 12px; transform: none; }
-  .overview-navigator-wrap { width: calc(100vw - 36px); left: 18px; transform: none; }
+  .overview-navigator-wrap { width: min(560px, calc(100vw - 200px)); left: 50%; transform: translateX(-50%); }
   .toc-panel { width: min(340px, 90vw); }
   .year-grid.compact { grid-template-columns: 1fr; }
   .detail-actions { grid-template-columns: 1fr; }
