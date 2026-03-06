@@ -1739,3 +1739,193 @@ html, body, #root {
   height: 1px;
   background: var(--stroke);
 }
+
+/* ─── Status toggle buttons ─── */
+.status-toggle-row {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+.status-toggle-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--stroke-med);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 100ms;
+}
+.status-toggle-btn:hover { border-color: var(--stroke-strong); }
+.status-toggle-btn.active {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+/* ─── Expand setting fields button ─── */
+.expand-setting-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  transition: color 100ms;
+  margin: 8px 0;
+}
+.expand-setting-btn:hover { color: var(--text-secondary); }
+
+/* ─── TOC Tags section ─── */
+.toc-tags-section {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--stroke);
+  margin-bottom: 8px;
+}
+.toc-tags-label {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.toc-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+.toc-tag-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--stroke-med);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 100ms;
+}
+.toc-tag-chip:hover { border-color: var(--stroke-strong); }
+.toc-tag-chip.active {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+.toc-tag-clear {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 100ms;
+}
+.toc-tag-clear:hover { color: var(--text); }
+
+/* ─── Media legend panel ─── */
+.media-legend-panel {
+  position: fixed;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.media-legend-content {
+  background: var(--surface);
+  border: 1px solid var(--stroke-med);
+  border-radius: 12px;
+  padding: 12px 8px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 140px;
+}
+.media-legend-title {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--stroke);
+  margin-bottom: 4px;
+}
+.media-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: all 100ms;
+}
+.media-legend-item:hover { background: var(--surface-raised); }
+.media-legend-item.active { background: var(--text); color: var(--bg); }
+.media-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.media-legend-label { flex: 1; text-align: left; }
+.media-legend-clear {
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 6px;
+  transition: all 100ms;
+  margin-top: 4px;
+  border-top: 1px solid var(--stroke);
+}
+.media-legend-clear:hover { color: var(--text); background: var(--surface-raised); }
+
+/* ─── Era tooltip ─── */
+.era-tooltip {
+  position: fixed;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--stroke-med);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  z-index: 60;
+}
+
+/* ─── Overview density histogram ─── */
+.overview-density-histogram {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.density-bar {
+  position: absolute;
+  bottom: 0;
+  background: var(--node-fill);
+  opacity: 0.18;
+  border-radius: 1px;
+  pointer-events: none;
+}

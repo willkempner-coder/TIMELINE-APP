@@ -76,6 +76,9 @@ const VIEWPORT_BUFFER_RATIO = 0.18;
 const VIEWPORT_BUFFER_MIN_YEARS = 2;
 const NODE_LANE_OFFSET = 16;
 const FUTURE_HEADROOM_YEARS = 300;
+const OVERVIEW_DEFAULT_HEIGHT = 58;
+const OVERVIEW_MIN_HEIGHT = 44;
+const OVERVIEW_MAX_HEIGHT = 88;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -259,7 +262,8 @@ function normalizeEntry(raw) {
     settingUserLocked: Boolean(userLocked),
     inferenceStatus: raw.inferenceStatus || (userLocked || hasSetting ? "done" : "idle"),
     notes: typeof raw.notes === "string" ? raw.notes : "",
-    tags: Array.isArray(raw.tags) ? raw.tags : []
+    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    status: raw.status || "consumed"
   };
 }
 
@@ -1081,6 +1085,9 @@ function App() {
   const [showEras, setShowEras] = useState(true);
   const [addShowProdEnd, setAddShowProdEnd] = useState(false);
   const [addShowSetEnd, setAddShowSetEnd] = useState(false);
+  const [showSettingFields, setShowSettingFields] = useState(false);
+  const [tocTagFilter, setTocTagFilter] = useState(null);
+  const [hoveredEraId, setHoveredEraId] = useState(null);
 
   const [selectedEntryId, setSelectedEntryId] = useState(null);
   const [popupAnchor, setPopupAnchor] = useState(null);
@@ -1113,7 +1120,8 @@ function App() {
     settingStart: "",
     settingEnd: "",
     notes: "",
-    tags: ""
+    tags: "",
+    status: "consumed"
   });
 
   const [editMode, setEditMode] = useState(false);
@@ -1193,7 +1201,7 @@ function App() {
 
   const [canvasRect, setCanvasRect] = useState({ width: 1200, height: 720 });
   const [overviewWidth, setOverviewWidth] = useState(360);
-  const [overviewHeight, setOverviewHeight] = useState(58);
+  const [overviewHeight, setOverviewHeight] = useState(OVERVIEW_DEFAULT_HEIGHT);
   const popupCloseTimerRef = useRef(null);
   const centerMoveRafRef = useRef(null);
   const pendingZoomSpanRef = useRef(timelineState.span);
@@ -1205,6 +1213,12 @@ function App() {
   useEffect(() => {
     preZoomStateRef.current = preZoomState;
   }, [preZoomState]);
+
+  useEffect(() => {
+    if (overviewHeight > OVERVIEW_MAX_HEIGHT) {
+      setOverviewHeight(OVERVIEW_DEFAULT_HEIGHT);
+    }
+  }, [overviewHeight]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
@@ -1338,12 +1352,16 @@ function App() {
 
   const selectedEntry = useMemo(() => entries.find((entry) => entry.id === selectedEntryId) || null, [entries, selectedEntryId]);
   const tocEntries = useMemo(() => {
-    return [...entries].sort((a, b) => {
+    let filtered = [...entries];
+    if (tocTagFilter) {
+      filtered = filtered.filter(entry => Array.isArray(entry.tags) && entry.tags.includes(tocTagFilter));
+    }
+    return filtered.sort((a, b) => {
       const ay = a.productionStart ?? a.settingStart ?? -999999;
       const by = b.productionStart ?? b.settingStart ?? -999999;
       return by - ay;
     });
-  }, [entries]);
+  }, [entries, tocTagFilter]);
 
   const viewEnd = clamp(timelineState.end, -100000, 100000);
   const viewStart = viewEnd - timelineState.span;
@@ -1469,6 +1487,32 @@ function App() {
 
     return Array.from(byBucket.values());
   }, [filteredEntries, mode, overviewWidth, timelineBounds.end, timelineBounds.span, timelineBounds.start]);
+
+  const overviewDensityBuckets = useMemo(() => {
+    const numBuckets = Math.min(80, Math.ceil(overviewWidth / 2));
+    const buckets = Array(numBuckets).fill(0);
+    const lanesToShow = mode === MODE_BOTH ? [MODE_PRODUCTION, MODE_SETTING] : [mode];
+
+    for (const entry of filteredEntries) {
+      for (const lane of lanesToShow) {
+        const year = lane === MODE_PRODUCTION ? entry.productionStart : entry.settingStart;
+        if (!Number.isFinite(year)) continue;
+        if (year < timelineBounds.start || year > timelineBounds.end) continue;
+
+        const bucketIndex = Math.floor(((year - timelineBounds.start) / timelineBounds.span) * numBuckets);
+        if (bucketIndex >= 0 && bucketIndex < numBuckets) {
+          buckets[bucketIndex] += 1;
+        }
+      }
+    }
+
+    const maxCount = Math.max(1, ...buckets);
+    return buckets.map((count, i) => ({
+      x: (i / numBuckets) * overviewWidth,
+      width: Math.max(1, (overviewWidth / numBuckets) * 0.9),
+      height: (count / maxCount) * (overviewHeight * 0.6)
+    }));
+  }, [filteredEntries, mode, overviewWidth, overviewHeight, timelineBounds.end, timelineBounds.span, timelineBounds.start]);
 
   const activeEraIds = useMemo(() => {
     const set = new Set();
@@ -2321,7 +2365,7 @@ function App() {
   function onOverviewResizeMove(event) {
     if (!overviewResizeRef.current) return;
     const dy = event.clientY - overviewResizeRef.current.startY;
-    const nextHeight = clamp(overviewResizeRef.current.startHeight - dy, 34, 180);
+    const nextHeight = clamp(overviewResizeRef.current.startHeight - dy, OVERVIEW_MIN_HEIGHT, OVERVIEW_MAX_HEIGHT);
     setOverviewHeight(nextHeight);
   }
 
@@ -2521,7 +2565,8 @@ function App() {
       settingUserLocked: hasManualSetting,
       inferenceStatus: hasManualSetting ? "done" : "idle",
       notes: addDraft.notes?.trim() ?? "",
-      tags: addDraft.tags ? addDraft.tags.split(",").map(t => t.trim()).filter(Boolean) : []
+      tags: addDraft.tags ? addDraft.tags.split(",").map(t => t.trim()).filter(Boolean) : [],
+      status: addDraft.status || "consumed"
     };
 
     if (!entry.title) return;
@@ -2543,8 +2588,10 @@ function App() {
       settingStart: "",
       settingEnd: "",
       notes: "",
-      tags: ""
+      tags: "",
+      status: "consumed"
     }));
+    setShowSettingFields(false);
   }
 
   function closePopup() {
@@ -3369,6 +3416,37 @@ function App() {
                 </button>
               ))}
             </div>
+            {(() => {
+              const allTags = new Set();
+              for (const entry of tocEntries) {
+                if (Array.isArray(entry.tags)) {
+                  entry.tags.forEach(tag => allTags.add(tag));
+                }
+              }
+              const tags = Array.from(allTags).sort();
+              return tags.length > 0 ? (
+                <div className="toc-tags-section">
+                  <div className="toc-tags-label">Tags</div>
+                  <div className="toc-tags-list">
+                    {tags.map(tag => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className={`toc-tag-chip ${tocTagFilter === tag ? "active" : ""}`}
+                        onClick={() => setTocTagFilter(t => t === tag ? null : tag)}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                    {tocTagFilter !== null ? (
+                      <button type="button" className="toc-tag-clear" onClick={() => setTocTagFilter(null)} title="Clear tag filter">
+                        ✕ clear
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null;
+            })()}
             <div className="toc-list">
               {(() => {
                 // Group by decade based on tocFilter
@@ -3461,6 +3539,24 @@ function App() {
               Author / Creator
               <input value={addDraft.creator} onChange={(event) => setAddField("creator", event.target.value)} />
             </label>
+            <div className="status-toggle-row">
+              <button
+                type="button"
+                className={`status-toggle-btn ${addDraft.status === "consumed" ? "active" : ""}`}
+                onClick={() => setAddField("status", "consumed")}
+                title="Mark as consumed"
+              >
+                ● Consumed
+              </button>
+              <button
+                type="button"
+                className={`status-toggle-btn ${addDraft.status === "want" ? "active" : ""}`}
+                onClick={() => setAddField("status", "want")}
+                title="Mark as want to consume"
+              >
+                ○ Want to
+              </button>
+            </div>
             <div className="year-fields">
               <div className="year-field-row">
                 <label>
@@ -3487,32 +3583,39 @@ function App() {
                   </label>
                 ) : null}
               </div>
-              <div className="year-field-row">
-                <label>
-                  Setting year
-                  <input
-                    value={addDraft.settingStart}
-                    onChange={(event) => setAddField("settingStart", event.target.value)}
-                    inputMode="numeric"
-                    placeholder="1940s"
-                  />
-                </label>
-                <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle setting end year">
-                  {addShowSetEnd ? "−" : "→"}
-                </button>
-                {addShowSetEnd ? (
+            </div>
+            <button type="button" className="expand-setting-btn" onClick={() => setShowSettingFields(v => !v)}>
+              {showSettingFields ? "− Set historical context" : "+ Set historical context"}
+            </button>
+            {showSettingFields ? (
+              <div className="year-fields">
+                <div className="year-field-row">
                   <label>
-                    End
+                    Story set in
                     <input
-                      value={addDraft.settingEnd}
-                      onChange={(event) => setAddField("settingEnd", event.target.value)}
+                      value={addDraft.settingStart}
+                      onChange={(event) => setAddField("settingStart", event.target.value)}
                       inputMode="numeric"
-                      placeholder="1945"
+                      placeholder="1940s"
                     />
                   </label>
-                ) : null}
+                  <button type="button" className="expand-range-btn" title="Add end year" onClick={() => setAddShowSetEnd(v => !v)} aria-label="Toggle setting end year">
+                    {addShowSetEnd ? "−" : "→"}
+                  </button>
+                  {addShowSetEnd ? (
+                    <label>
+                      to
+                      <input
+                        value={addDraft.settingEnd}
+                        onChange={(event) => setAddField("settingEnd", event.target.value)}
+                        inputMode="numeric"
+                        placeholder="1945"
+                      />
+                    </label>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
             <label>
               Notes
               <textarea
@@ -3988,14 +4091,53 @@ function App() {
         </div>
       ) : null}
 
+      {/* Media type legend panel */}
+      <aside className="media-legend-panel">
+        <div className="media-legend-content">
+          <div className="media-legend-title">Media Types</div>
+          {MEDIA_TYPES.map(type => (
+            <button
+              key={type.id}
+              type="button"
+              className={`media-legend-item ${soloType === type.id ? "active" : ""}`}
+              onClick={() => setSoloType(s => s === type.id ? null : type.id)}
+              title={soloType === type.id ? "Show all types" : `Show only ${type.label}`}
+            >
+              <span className="media-legend-dot" style={{ background: colorForMediaType(type.id) }} />
+              <span className="media-legend-label">{type.label}</span>
+            </button>
+          ))}
+          {soloType !== null ? (
+            <button
+              type="button"
+              className="media-legend-clear"
+              onClick={() => setSoloType(null)}
+              title="Show all types"
+            >
+              Show all
+            </button>
+          ) : null}
+        </div>
+      </aside>
+
       <section
         ref={canvasRef}
         className="timeline-canvas"
         onWheel={onWheelNavigate}
         onPointerDown={onDragStart}
-        onPointerMove={onDragMove}
+        onPointerMove={(event) => {
+          onDragMove(event);
+          if (canvasRef.current && !lockedRange) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const clientX = event.clientX - rect.left;
+            const yearAtX = viewStart + (clientX / canvasRect.width) * timelineState.span;
+            const hoveredEra = HISTORICAL_ERAS.find(era => yearAtX >= era.start && yearAtX <= era.end) || null;
+            setHoveredEraId(hoveredEra?.id || null);
+          }
+        }}
         onPointerUp={onDragEnd}
         onPointerCancel={onDragEnd}
+        onPointerLeave={() => setHoveredEraId(null)}
       >
         <svg width="100%" height="100%" viewBox={`0 0 ${canvasRect.width} ${canvasRect.height}`}>
           <rect x="0" y="0" width={canvasRect.width} height={canvasRect.height} fill="transparent" />
@@ -4032,13 +4174,18 @@ function App() {
             const bottomY = laneYValues.length > 0 ? Math.max(...laneYValues) + 50 : canvasRect.height / 2 + 80;
 
             return visibleEras.map((item, i) => (
-              <g key={item.era.id} className="era-zone">
+              <g key={item.era.id} className="era-zone" style={{ cursor: "pointer" }}>
                 <rect
                   x={item.rx} y={topY}
                   width={item.rw} height={bottomY - topY}
                   fill={item.era.color}
-                  opacity="0.18"
+                  opacity={hoveredEraId === item.era.id ? "0.28" : "0.18"}
                   rx="2"
+                  onClick={() => {
+                    const padding = Math.max(item.era.end - item.era.start, 1) * 0.05;
+                    applyTimelineWindow(item.era.start - padding, (item.era.end - item.era.start) + padding * 2);
+                  }}
+                  style={{ transition: "opacity 200ms ease" }}
                 />
                 {labelAllowed[i] ? (
                   <text
@@ -4185,6 +4332,9 @@ function App() {
             const isSelected = selectedEntryId === marker.entryId;
             const isFaded = selectedEntryId && !isSelected;
 
+            const nodeColor = marker.color || colorForMediaType(marker.mediaType);
+            const isWantStatus = entry.status === "want";
+
             return (
               <div
                 key={marker.id}
@@ -4201,7 +4351,7 @@ function App() {
                 <button
                   type="button"
                   className={classes.join(" ")}
-                  style={{ background: marker.color || colorForMediaType(marker.mediaType) }}
+                  style={isWantStatus ? { background: "white", border: `2px solid ${nodeColor}` } : { background: nodeColor }}
                   onMouseEnter={() => {
                     setHoveredEntryId(marker.entryId);
                     if (marker.rangeEnd > marker.rangeStart) setHoveredRangeMarkerId(marker.id);
@@ -4226,7 +4376,7 @@ function App() {
                   title={entry.title}
                 >
                   {MEDIA_ICON_PATHS[marker.mediaType] ? (
-                    <svg viewBox="0 0 24 24" width={isDetailed ? 13 : 10} height={isDetailed ? 13 : 10} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <svg viewBox="0 0 24 24" width={isDetailed ? 13 : 10} height={isDetailed ? 13 : 10} fill="none" stroke={isWantStatus ? nodeColor : "currentColor"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <path d={MEDIA_ICON_PATHS[marker.mediaType]} />
                     </svg>
                   ) : type.icon}
@@ -4236,11 +4386,7 @@ function App() {
                   <button
                     type="button"
                     className="node end-cap"
-                    style={{
-                      left: `${marker.xEnd - marker.xStart}px`,
-                      top: "0px",
-                      background: marker.color || colorForMediaType(marker.mediaType)
-                    }}
+                    style={isWantStatus ? { left: `${marker.xEnd - marker.xStart}px`, top: "0px", background: "white", border: `2px solid ${nodeColor}` } : { left: `${marker.xEnd - marker.xStart}px`, top: "0px", background: nodeColor }}
                     onMouseEnter={() => {
                       setHoveredEntryId(marker.entryId);
                       setHoveredRangeMarkerId(marker.id);
@@ -4413,6 +4559,22 @@ function App() {
             })()}
           </svg>
         ) : null}
+        {hoveredEraId && canvasRef.current ? (() => {
+          const era = HISTORICAL_ERAS.find(e => e.id === hoveredEraId);
+          if (!era) return null;
+          const rect = canvasRef.current.getBoundingClientRect();
+          const x1Px = rect.left + toX(era.start, viewStart, timelineState.span, canvasRect.width);
+          const x2Px = rect.left + toX(era.end, viewStart, timelineState.span, canvasRect.width);
+          const tooltipX = clamp((x1Px + x2Px) / 2, rect.left + 60, rect.right - 60);
+          const laneYValues = Object.values(lanes);
+          const topY = laneYValues.length > 0 ? Math.min(...laneYValues) - 50 : canvasRect.height / 2 - 80;
+          const tooltipY = rect.top + topY - 24;
+          return (
+            <div className="era-tooltip" style={{ left: `${tooltipX}px`, top: `${tooltipY}px` }}>
+              {era.label}
+            </div>
+          );
+        })() : null}
       </section>
 
       {viewMode === "scatter" && scatterBounds ? (
@@ -4548,6 +4710,19 @@ function App() {
         </div>
         <div ref={overviewRef} className="overview-track" style={{ height: `${overviewHeight}px` }} onClick={onOverviewClick} onWheel={onOverviewWheel}>
           <div className="overview-baseline" />
+          <div className="overview-density-histogram">
+            {overviewDensityBuckets.map((bucket, i) => (
+              <div
+                key={`density-${i}`}
+                className="density-bar"
+                style={{
+                  left: `${bucket.x}px`,
+                  width: `${bucket.width}px`,
+                  height: `${bucket.height}px`
+                }}
+              />
+            ))}
+          </div>
           {overviewMiniPoints.map((point) => (
             <div
               key={point.id}
@@ -4613,12 +4788,6 @@ function App() {
         </div>
       ) : null}
 
-      <div className="status-bar">
-        <span>{filteredEntries.length} items · {visibleEntryCount} visible · {baseRenderedUnits} nodes</span>
-        {(inferenceUi.queued > 0 || inferenceUi.running > 0) ? (
-          <span>Inferring: {inferenceUi.running} active, {inferenceUi.queued} queued</span>
-        ) : null}
-      </div>
     </div>
   );
 }
