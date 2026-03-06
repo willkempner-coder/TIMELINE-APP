@@ -1277,6 +1277,75 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    function onKeyDown(event) {
+      // Don't handle keys if focus is on an input, textarea, or select
+      const target = document.activeElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+        return;
+      }
+
+      const key = event.key;
+      const span = pendingZoomSpanRef.current;
+      const start = pendingViewStartRef.current;
+      const maxSpan = Math.max(0.4, timelineBounds.end - timelineBounds.start);
+
+      switch (key) {
+        case "ArrowLeft":
+          event.preventDefault();
+          const panLeftAmount = span * 0.1;
+          pendingViewStartRef.current = start - panLeftAmount;
+          scheduleTimelineWindow(start - panLeftAmount, span);
+          break;
+
+        case "ArrowRight":
+          event.preventDefault();
+          const panRightAmount = span * 0.1;
+          pendingViewStartRef.current = start + panRightAmount;
+          scheduleTimelineWindow(start + panRightAmount, span);
+          break;
+
+        case "ArrowUp":
+        case "=":
+        case "+":
+          event.preventDefault();
+          const newSpanZoomIn = Math.max(0.4, span * 0.7);
+          updateSpan(newSpanZoomIn);
+          break;
+
+        case "ArrowDown":
+        case "-":
+          event.preventDefault();
+          const newSpanZoomOut = Math.min(maxSpan, span * 1.3);
+          updateSpan(newSpanZoomOut);
+          break;
+
+        case "Home":
+          event.preventDefault();
+          const minYear = timelineBounds.start;
+          const homeSpan = Math.max(0.4, Math.min(span, Math.max(0.4, timelineBounds.end - minYear) / 2));
+          pendingViewStartRef.current = minYear;
+          scheduleTimelineWindow(minYear, homeSpan);
+          break;
+
+        case "End":
+          event.preventDefault();
+          const endYear = timelineBounds.end;
+          const endSpan = Math.max(0.4, Math.min(span, Math.max(0.4, endYear - timelineBounds.start) / 2));
+          const endStart = Math.max(timelineBounds.start, endYear - endSpan);
+          pendingViewStartRef.current = endStart;
+          scheduleTimelineWindow(endStart, endSpan);
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [timelineBounds]);
+
   useLayoutEffect(() => {
     if (!popupRef.current) return undefined;
 
@@ -3195,15 +3264,35 @@ function App() {
           +
         </button>
         <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
-        {lockedRange ? (
-          <button type="button" className="range-lock-chip" onClick={clearRangeLock} title="Exit range lock">
-            <span>{formatTimelineYear(timelineBounds.start)}-{formatTimelineYear(timelineBounds.end)}</span>
-            <span>×</span>
-          </button>
-        ) : null}
       </div>
 
       <div className="corner-buttons top-right">
+        {lockedRange ? (
+          <button type="button" className="glass-btn range-lock-chip" onClick={() => toggleMainMenu("range")} title="Edit focused range">
+            <span className="range-lock-chip-text">
+              [{formatTimelineYear(lockedRange.start)} – {formatTimelineYear(lockedRange.end)}]
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              className="range-lock-chip-close"
+              aria-label="Exit range focus"
+              onClick={(event) => {
+                event.stopPropagation();
+                clearRangeLock();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  clearRangeLock();
+                }
+              }}
+            >
+              ×
+            </span>
+          </button>
+        ) : null}
         <button
           className={`glass-btn view-toggle-btn ${viewMode === "scatter" ? "active" : ""}`}
           type="button"
@@ -3260,36 +3349,7 @@ function App() {
       </div>
 
       <div className="corner-buttons bottom-right">
-        {lockedRange ? (
-          <button className="glass-btn range-lock-control" type="button" onClick={() => toggleMainMenu("range")} title="Edit focused range">
-            <span className="range-lock-control-main">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 4H5v16h3" />
-                <path d="M16 4h3v16h-3" />
-              </svg>
-              <span>{`${formatTimelineYear(lockedRange.start)} - ${formatTimelineYear(lockedRange.end)}`}</span>
-            </span>
-            <span
-              role="button"
-              tabIndex={0}
-              className="range-lock-control-close"
-              aria-label="Exit range focus"
-              onClick={(event) => {
-                event.stopPropagation();
-                clearRangeLock();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  clearRangeLock();
-                }
-              }}
-            >
-              ×
-            </span>
-          </button>
-        ) : (
+        {!lockedRange && (
           <button className="glass-btn range-icon-btn" type="button" onClick={() => toggleMainMenu("range")} title="Focus year range">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 4H5v16h3" />
@@ -3585,13 +3645,13 @@ function App() {
               </div>
             </div>
             <button type="button" className="expand-setting-btn" onClick={() => setShowSettingFields(v => !v)}>
-              {showSettingFields ? "− Set historical context" : "+ Set historical context"}
+              {showSettingFields ? "− Set in" : "+ Set in"}
             </button>
             {showSettingFields ? (
               <div className="year-fields">
                 <div className="year-field-row">
                   <label>
-                    Story set in
+                    Period
                     <input
                       value={addDraft.settingStart}
                       onChange={(event) => setAddField("settingStart", event.target.value)}
@@ -4091,17 +4151,16 @@ function App() {
         </div>
       ) : null}
 
-      {/* Media type legend panel */}
+      {/* Media type legend — horizontal strip below timeline */}
       <aside className="media-legend-panel">
         <div className="media-legend-content">
-          <div className="media-legend-title">Media Types</div>
           {MEDIA_TYPES.map(type => (
             <button
               key={type.id}
               type="button"
               className={`media-legend-item ${soloType === type.id ? "active" : ""}`}
               onClick={() => setSoloType(s => s === type.id ? null : type.id)}
-              title={soloType === type.id ? "Show all types" : `Show only ${type.label}`}
+              title={soloType === type.id ? "Show all types" : `Filter: ${type.label}`}
             >
               <span className="media-legend-dot" style={{ background: colorForMediaType(type.id) }} />
               <span className="media-legend-label">{type.label}</span>
@@ -4112,9 +4171,8 @@ function App() {
               type="button"
               className="media-legend-clear"
               onClick={() => setSoloType(null)}
-              title="Show all types"
             >
-              Show all
+              ✕ Clear
             </button>
           ) : null}
         </div>
@@ -4182,10 +4240,11 @@ function App() {
                   opacity={hoveredEraId === item.era.id ? "0.28" : "0.18"}
                   rx="2"
                   onClick={() => {
-                    const padding = Math.max(item.era.end - item.era.start, 1) * 0.05;
-                    applyTimelineWindow(item.era.start - padding, (item.era.end - item.era.start) + padding * 2);
+                    const span = Math.max(item.era.end - item.era.start, 1);
+                    const padding = span * 0.06;
+                    animateTimelineToWindow(item.era.start - padding, span + padding * 2);
                   }}
-                  style={{ transition: "opacity 200ms ease" }}
+                  style={{ transition: "opacity 200ms ease", pointerEvents: "all", cursor: "pointer" }}
                 />
                 {labelAllowed[i] ? (
                   <text
@@ -4433,10 +4492,15 @@ function App() {
                   ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
                   : baseX;
 
+                // Separate groups with 1 item (render directly) from groups with 2+ items (render as branch nodes)
+                const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
+                const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
+                const allSingleItems = singleItemGroups.flatMap((g) => g.items);
+
                 return (
                   <>
-                    {typeGroups.map((group, index) => {
-                      const x = spreadX(baseX, index, typeGroups.length, groupSpacing);
+                    {multiItemGroups.map((group, index) => {
+                      const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
                       const isActiveType = expandedBranchType === group.mediaType;
                       return (
                         <button
@@ -4461,6 +4525,33 @@ function App() {
                           type="button"
                           className="node branch-node branch-item-node"
                           style={{ left: `${x}px`, top: `${detailY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
+                          onMouseEnter={() => setHoveredEntryId(entry.id)}
+                          onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
+                          onClick={(event) =>
+                            onNodeActivate(
+                              {
+                                entryId: entry.id,
+                                lane: branchLane,
+                                anchorYear: item.year,
+                                resolution: "year"
+                              },
+                              event
+                            )
+                          }
+                          title={entry.title}
+                        />
+                      );
+                    })}
+
+                    {allSingleItems.map((item, index) => {
+                      const entry = item.entry;
+                      const x = spreadX(baseX, index, allSingleItems.length, groupSpacing);
+                      return (
+                        <button
+                          key={`branch-single-${entry.id}`}
+                          type="button"
+                          className="node branch-node"
+                          style={{ left: `${x}px`, top: `${groupY}px`, background: entry.color || colorForMediaType(entry.mediaType) }}
                           onMouseEnter={() => setHoveredEntryId(entry.id)}
                           onMouseLeave={() => setHoveredEntryId((current) => (current === entry.id ? null : current))}
                           onClick={(event) =>
@@ -4544,10 +4635,16 @@ function App() {
               const activeGroupX = activeGroupIndex >= 0
                 ? spreadX(baseX, activeGroupIndex, typeGroups.length, groupSpacing)
                 : baseX;
+
+              // Separate groups with 1 item (render directly) from groups with 2+ items
+              const multiItemGroups = typeGroups.filter((g) => g.items.length >= 2);
+              const singleItemGroups = typeGroups.filter((g) => g.items.length === 1);
+              const allSingleItems = singleItemGroups.flatMap((g) => g.items);
+
               return (
                 <>
-                  {typeGroups.map((group, index) => {
-                    const x = spreadX(baseX, index, typeGroups.length, groupSpacing);
+                  {multiItemGroups.map((group, index) => {
+                    const x = spreadX(baseX, index, multiItemGroups.length, groupSpacing);
                     return <line key={`branch-type-line-${group.mediaType}`} x1={baseX} y1={baseY} x2={x} y2={groupY} className="branch-line" />;
                   })}
                   {activeEntries.map((item, index) => {
@@ -4575,6 +4672,36 @@ function App() {
             </div>
           );
         })() : null}
+
+        <button
+          className="glass-btn timeline-pan-btn pan-left"
+          type="button"
+          onClick={() => {
+            const panAmount = timelineState.span * 0.2;
+            const newStart = viewStart - panAmount;
+            pendingViewStartRef.current = newStart;
+            scheduleTimelineWindow(newStart, timelineState.span);
+          }}
+          title="Pan left"
+          aria-label="Pan timeline left"
+        >
+          ‹
+        </button>
+
+        <button
+          className="glass-btn timeline-pan-btn pan-right"
+          type="button"
+          onClick={() => {
+            const panAmount = timelineState.span * 0.2;
+            const newStart = viewStart + panAmount;
+            pendingViewStartRef.current = newStart;
+            scheduleTimelineWindow(newStart, timelineState.span);
+          }}
+          title="Pan right"
+          aria-label="Pan timeline right"
+        >
+          ›
+        </button>
       </section>
 
       {viewMode === "scatter" && scatterBounds ? (

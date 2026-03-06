@@ -13,8 +13,8 @@
   --text-secondary: #4a4844;
   --muted: #7a7670;
   --line: rgba(0, 0, 0, 0.55);
-  --tick-line: rgba(0, 0, 0, 0.07);
-  --tick-label: rgba(0, 0, 0, 0.30);
+  --tick-line: rgba(0, 0, 0, 0.14);
+  --tick-label: rgba(0, 0, 0, 0.45);
   --node-fill: #1c1a17;
   --node-text: #f5f4f0;
   --node-border: rgba(0, 0, 0, 0.0);
@@ -41,8 +41,8 @@
   --text-secondary: #b0ada6;
   --muted: #7a7670;
   --line: rgba(255, 255, 255, 0.55);
-  --tick-line: rgba(255, 255, 255, 0.07);
-  --tick-label: rgba(255, 255, 255, 0.30);
+  --tick-line: rgba(255, 255, 255, 0.14);
+  --tick-label: rgba(255, 255, 255, 0.45);
   --node-fill: #f0ede6;
   --node-text: #1c1a17;
   --node-border: rgba(255, 255, 255, 0.0);
@@ -120,6 +120,32 @@ html, body, #root {
   color: var(--bg);
   border-color: var(--text);
 }
+
+/* Pan buttons for timeline */
+.timeline-pan-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  font-size: 1.2rem;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: auto;
+}
+.timeline-pan-btn.pan-left {
+  left: 12px;
+}
+.timeline-pan-btn.pan-right {
+  right: 12px;
+}
+.timeline-canvas:hover .timeline-pan-btn {
+  opacity: 0.6;
+}
+.timeline-pan-btn:hover {
+  opacity: 1 !important;
+}
+
 .live-range-chip {
   height: 36px;
   min-width: 112px;
@@ -147,13 +173,36 @@ html, body, #root {
   color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 0.7rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
 }
 .range-lock-chip:hover {
+  border-color: var(--stroke-strong);
+  color: var(--text);
+}
+.range-lock-chip-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+.range-lock-chip-close {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-med);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+.range-lock-chip-close:hover {
   border-color: var(--stroke-strong);
   color: var(--text);
 }
@@ -1165,10 +1214,10 @@ html, body, #root {
 .timeline-canvas:active { cursor: grabbing; }
 
 .tick-group { pointer-events: none; }
-.tick-line { stroke: var(--tick-line); stroke-width: 0.5; }
+.tick-line { stroke: var(--tick-line); stroke-width: 0.8; }
 .tick-label {
   fill: var(--tick-label);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.04em;
   font-family: "Inter", sans-serif;
@@ -1829,71 +1878,68 @@ html, body, #root {
 
 /* ─── Media legend panel ─── */
 .media-legend-panel {
-  position: fixed;
-  left: 16px;
-  top: 50%;
-  transform: translateY(-50%);
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 108px;
   z-index: 25;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 .media-legend-content {
   background: var(--surface);
   border: 1px solid var(--stroke-med);
-  border-radius: 12px;
-  padding: 12px 8px;
-  box-shadow: var(--shadow-md);
+  border-radius: 20px;
+  padding: 7px 14px;
+  box-shadow: var(--shadow-sm);
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 140px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 4px;
 }
-.media-legend-title {
-  padding: 4px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--stroke);
-  margin-bottom: 4px;
-}
+.media-legend-title { display: none; }
 .media-legend-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 5px;
+  padding: 4px 8px;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-family: "Inter", sans-serif;
+  letter-spacing: 0.01em;
   transition: all 100ms;
+  white-space: nowrap;
 }
-.media-legend-item:hover { background: var(--surface-raised); }
-.media-legend-item.active { background: var(--text); color: var(--bg); }
+.media-legend-item:hover { background: var(--surface-raised); color: var(--text); }
+.media-legend-item.active {
+  background: var(--text);
+  color: var(--bg);
+}
 .media-legend-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
-.media-legend-label { flex: 1; text-align: left; }
+.media-legend-label { }
 .media-legend-clear {
-  padding: 6px 8px;
+  padding: 4px 8px;
   border: none;
+  border-left: 1px solid var(--stroke);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
-  border-radius: 6px;
-  transition: all 100ms;
-  margin-top: 4px;
-  border-top: 1px solid var(--stroke);
+  font-size: 0.7rem;
+  font-family: "Inter", sans-serif;
+  border-radius: 0;
+  transition: color 100ms;
+  margin-left: 4px;
 }
-.media-legend-clear:hover { color: var(--text); background: var(--surface-raised); }
+.media-legend-clear:hover { color: var(--text); }
 
 /* ─── Era tooltip ─── */
 .era-tooltip {
