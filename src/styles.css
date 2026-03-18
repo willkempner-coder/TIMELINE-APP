@@ -120,8 +120,15 @@ html, body, #root {
   z-index: 72;
   flex-direction: row;
   align-items: center;
+  max-width: min(38vw, 420px);
+  min-width: 0;
 }
 .corner-buttons.top-right { top: 16px; right: 16px; flex-direction: row; }
+.corner-buttons.top-right {
+  z-index: 72;
+  align-items: center;
+  max-width: min(36vw, 320px);
+}
 .auth-btn {
   min-width: 88px;
   text-transform: none;
@@ -194,17 +201,21 @@ html, body, #root {
 
 .live-range-chip {
   min-width: 112px;
+  max-width: 220px;
   padding: 0 2px;
   border: none;
   background: transparent;
   color: var(--text);
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   font-size: 0.9rem;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: "Inter", sans-serif;
   transition: color 120ms ease;
 }
@@ -654,6 +665,7 @@ html, body, #root {
 .panel-overlay.menu-toc      { z-index: 50; }
 .panel-overlay.menu-add      { z-index: 60; }
 .panel-overlay.menu-timelines { z-index: 62; }
+.panel-overlay.menu-auth     { z-index: 68; }
 .panel-overlay.menu-range    { z-index: 65; }
 .panel-overlay.menu-settings { z-index: 70; }
 .panel-overlay.import-preview-overlay { z-index: 80; }
@@ -757,6 +769,10 @@ html, body, #root {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+.timeline-end-control {
+  display: grid;
+  gap: 8px;
 }
 .timeline-preset-media-grid {
   display: flex;
@@ -1123,22 +1139,56 @@ html, body, #root {
 }
 .sheet input:focus, .sheet select:focus { border-color: var(--stroke-strong); }
 .auth-sheet {
-  width: min(360px, calc(100vw - 32px));
+  position: absolute;
+  top: 60px;
+  right: 16px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 92px);
+  overflow: auto;
+  padding-bottom: 12px;
 }
 .auth-form,
 .auth-copy-block {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+}
+.auth-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.auth-form input {
+  width: 100%;
+  border: 1px solid var(--stroke-med);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.92rem;
 }
 .auth-copy-block p,
 .auth-copy-block small {
   margin: 0;
+}
+.auth-copy-block {
+  padding-top: 2px;
+}
+.auth-copy-block p {
+  color: var(--text);
+  line-height: 1.45;
 }
 .auth-copy-block small,
 .auth-status-text {
   color: var(--text-secondary);
   font-size: 0.76rem;
   line-height: 1.45;
+}
+.auth-status-text {
+  display: block;
+  margin-top: -2px;
 }
 
 .sheet button {
@@ -1325,36 +1375,44 @@ html, body, #root {
 .import-logo-btn .lb-dot-3 { left: 24px; background: #40bcff; }
 .spotify-logo-btn {
   background: #1ed760;
-  color: #08110d;
+  color: #1ed760;
 }
 .spotify-logo-btn.active {
   border-color: #1ed760;
-  box-shadow: inset 0 0 0 1px #08110d;
+  box-shadow: inset 0 0 0 1px rgba(8, 17, 13, 0.5);
+}
+.spotify-logo-btn::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: #08110d;
 }
 .spotify-logo-wave {
   position: absolute;
-  left: 10px;
-  width: 24px;
-  border-top: 2px solid #08110d;
+  left: 11px;
+  width: 22px;
+  border-top: 2.2px solid currentColor;
   border-radius: 50%;
+  z-index: 1;
 }
 .spotify-logo-wave-1 {
-  top: 14px;
-  height: 8px;
+  top: 13px;
+  height: 7px;
   transform: rotate(8deg);
 }
 .spotify-logo-wave-2 {
-  top: 20px;
-  height: 7px;
-  width: 20px;
-  left: 12px;
+  top: 19px;
+  height: 6px;
+  width: 18px;
+  left: 13px;
   transform: rotate(8deg);
 }
 .spotify-logo-wave-3 {
-  top: 26px;
-  height: 6px;
-  width: 16px;
-  left: 14px;
+  top: 24px;
+  height: 5px;
+  width: 14px;
+  left: 15px;
   transform: rotate(8deg);
 }
 .import-logo-btn[data-tip]::after {
@@ -2605,7 +2663,20 @@ html, body, #root {
 
 /* ─── Responsive ─── */
 @media (max-width: 1180px) {
-  .top-center-search { left: 70px; right: 70px; width: auto; transform: none; }
+  .top-center-search {
+    left: 280px;
+    right: 220px;
+    width: auto;
+    transform: none;
+  }
+  .active-timeline-title {
+    top: 62px;
+    left: 280px;
+    right: 220px;
+    max-width: none;
+    transform: none;
+    padding: 0;
+  }
   .hover-headline {
     top: 66px;
     left: 70px;
@@ -2623,6 +2694,43 @@ html, body, #root {
   .year-grid.compact { grid-template-columns: 1fr; }
   .detail-actions { grid-template-columns: 1fr; }
   .import-preview-setting-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 980px) {
+  .corner-buttons.top-left {
+    max-width: 46vw;
+  }
+  .live-range-chip {
+    max-width: 150px;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+  }
+  .top-center-search {
+    left: 232px;
+    right: 174px;
+  }
+  .active-timeline-title {
+    left: 232px;
+    right: 174px;
+  }
+}
+
+@media (max-width: 760px) {
+  .live-range-chip {
+    max-width: 110px;
+    font-size: 0.76rem;
+  }
+  .top-center-search {
+    left: 16px;
+    right: 16px;
+    top: 62px;
+  }
+  .active-timeline-title {
+    top: 106px;
+    left: 16px;
+    right: 16px;
+    text-align: left;
+  }
 }
 
 /* ─── Era zones ─── */

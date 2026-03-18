@@ -1975,6 +1975,7 @@ function App() {
   const [openTimelineIds, setOpenTimelineIds] = useState([]);
   const [focusedTimelineId, setFocusedTimelineId] = useState(null);
   const [timelineDraft, setTimelineDraft] = useState({ name: "", start: "", end: "Present", mediaTypes: ["book", "movie", "podcast"] });
+  const [timelineDraftEndMode, setTimelineDraftEndMode] = useState("present");
   const [timelineDraftError, setTimelineDraftError] = useState("");
   const [inlineNotesOpen, setInlineNotesOpen] = useState(false);
   const [inlineNotesDraft, setInlineNotesDraft] = useState("");
@@ -5065,6 +5066,7 @@ function App() {
     setTimelinePresets((current) => [...current, nextPreset]);
     setOpenTimelineIds((current) => [...current, nextPreset.id]);
     setTimelineDraft({ name: "", start: "", end: "Present", mediaTypes: ["book", "movie", "podcast"] });
+    setTimelineDraftEndMode("present");
     setTimelineDraftError("");
     window.requestAnimationFrame(() => focusTimelinePreset(nextPreset));
   }
@@ -5169,6 +5171,10 @@ function App() {
         <button className="glass-btn timeline-menu-btn" type="button" onClick={() => toggleMainMenu("timelines")} title="Timelines">
           TIMELINES
         </button>
+        <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
+      </div>
+
+      <div className="corner-buttons top-right">
         <button className="glass-btn toc-icon" type="button" onClick={() => toggleMainMenu("toc")} title="Table of contents">
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path d="M8 9h16M8 16h16M8 23h16" />
@@ -5180,10 +5186,6 @@ function App() {
         <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
           +
         </button>
-        <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
-      </div>
-
-      <div className="corner-buttons top-right">
         <button className={`glass-btn auth-btn ${authSession?.user ? "active" : ""}`} type="button" onClick={() => toggleMainMenu("auth")}>
           {authSession?.user?.email ? authSession.user.email.split("@")[0] : "Sign In"}
         </button>
@@ -5466,7 +5468,7 @@ function App() {
                 <input
                   value={timelineDraft.name}
                   onChange={(event) => setTimelineDraft((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Angela Davis"
+                  placeholder="World War 2 Research"
                 />
               </label>
               <div className="timeline-preset-years">
@@ -5480,11 +5482,30 @@ function App() {
                 </label>
                 <label>
                   <span>End</span>
-                  <input
-                    value={timelineDraft.end}
-                    onChange={(event) => setTimelineDraft((current) => ({ ...current, end: event.target.value }))}
-                    placeholder="Present"
-                  />
+                  <div className="timeline-end-control">
+                    <select
+                      value={timelineDraftEndMode}
+                      onChange={(event) => {
+                        const nextMode = event.target.value;
+                        setTimelineDraftEndMode(nextMode);
+                        setTimelineDraft((current) => ({
+                          ...current,
+                          end: nextMode === "present" ? "Present" : (/^present$/i.test(String(current.end || "").trim()) ? "" : current.end)
+                        }));
+                      }}
+                    >
+                      <option value="present">Present</option>
+                      <option value="year">Specific year</option>
+                    </select>
+                    {timelineDraftEndMode === "year" ? (
+                      <input
+                        value={timelineDraft.end}
+                        onChange={(event) => setTimelineDraft((current) => ({ ...current, end: event.target.value }))}
+                        placeholder="1989"
+                        inputMode="numeric"
+                      />
+                    ) : null}
+                  </div>
                 </label>
               </div>
               <label>
