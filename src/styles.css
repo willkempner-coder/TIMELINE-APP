@@ -122,6 +122,10 @@ html, body, #root {
   align-items: center;
 }
 .corner-buttons.top-right { top: 16px; right: 16px; flex-direction: row; }
+.auth-btn {
+  min-width: 88px;
+  text-transform: none;
+}
 .corner-buttons.bottom-left  { left: 16px; bottom: 16px; flex-direction: row; }
 .corner-buttons.bottom-right {
   right: 16px;
@@ -1118,6 +1122,24 @@ html, body, #root {
   font-size: 0.84rem;
 }
 .sheet input:focus, .sheet select:focus { border-color: var(--stroke-strong); }
+.auth-sheet {
+  width: min(360px, calc(100vw - 32px));
+}
+.auth-form,
+.auth-copy-block {
+  display: grid;
+  gap: 10px;
+}
+.auth-copy-block p,
+.auth-copy-block small {
+  margin: 0;
+}
+.auth-copy-block small,
+.auth-status-text {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
 
 .sheet button {
   border-radius: 6px;

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import Papa from "papaparse";
+import { createClient } from "@supabase/supabase-js";
 import INITIAL_DATA from "./initialData.json";
 
 const STORAGE_KEY = "timeline-media-log-v6";
@@ -17,10 +18,22 @@ const BATCH_ENRICHER_URL = String(import.meta.env.VITE_BATCH_ENRICHER_URL || "")
 const USE_SEED_DATA = String(import.meta.env.VITE_USE_SEED_DATA ?? "true").toLowerCase() !== "false";
 const SPOTIFY_CLIENT_ID = String(import.meta.env.VITE_SPOTIFY_CLIENT_ID || "").trim();
 const SPOTIFY_REDIRECT_URI = String(import.meta.env.VITE_SPOTIFY_REDIRECT_URI || "").trim();
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
+const SUPABASE_ANON_KEY = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 const SPOTIFY_SCOPES = ["playlist-read-private", "playlist-read-collaborative"];
 const SPOTIFY_AUTH_STORAGE_KEY = "timeline-spotify-auth-v1";
 const SPOTIFY_PENDING_STORAGE_KEY = "timeline-spotify-pending-import-v1";
 const SPOTIFY_PKCE_STORAGE_KEY = "timeline-spotify-pkce-v1";
+const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true
+        }
+      })
+    : null;
 
 const MEDIA_TYPES = [
   { id: "book", label: "Book", icon: "BK" },
@@ -466,6 +479,67 @@ function normalizeEntry(raw) {
     spotifyPlaylistId: String(raw.spotifyPlaylistId || ""),
     spotifyPlaylistName: String(raw.spotifyPlaylistName || "")
   };
+}
+
+function entryToSupabaseRow(entry, userId) {
+  return {
+    id: String(entry.id),
+    user_id: userId,
+    media_type: String(entry.mediaType || "book"),
+    title: String(entry.title || ""),
+    creator: String(entry.creator || ""),
+    director: String(entry.director || ""),
+    production_start: Number.isFinite(entry.productionStart) ? entry.productionStart : null,
+    production_end: Number.isFinite(entry.productionEnd) ? entry.productionEnd : null,
+    setting_start: Number.isFinite(entry.settingStart) ? entry.settingStart : null,
+    setting_end: Number.isFinite(entry.settingEnd) ? entry.settingEnd : null,
+    source: String(entry.source || "manual"),
+    setting_source: entry.settingSource || null,
+    setting_confidence: Number.isFinite(entry.settingConfidence) ? entry.settingConfidence : null,
+    setting_auto: Boolean(entry.settingAuto),
+    setting_user_locked: Boolean(entry.settingUserLocked),
+    inference_status: String(entry.inferenceStatus || "idle"),
+    notes: typeof entry.notes === "string" ? entry.notes : "",
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
+    status: String(entry.status || "consumed"),
+    color: entry.color || null,
+    spotify_track_id: String(entry.spotifyTrackId || ""),
+    spotify_track_uri: String(entry.spotifyTrackUri || ""),
+    spotify_album_id: String(entry.spotifyAlbumId || ""),
+    spotify_album_uri: String(entry.spotifyAlbumUri || ""),
+    spotify_playlist_id: String(entry.spotifyPlaylistId || ""),
+    spotify_playlist_name: String(entry.spotifyPlaylistName || "")
+  };
+}
+
+function supabaseRowToEntry(row) {
+  return normalizeEntry({
+    id: row.id,
+    mediaType: row.media_type,
+    title: row.title,
+    creator: row.creator,
+    director: row.director,
+    productionStart: row.production_start,
+    productionEnd: row.production_end,
+    settingStart: row.setting_start,
+    settingEnd: row.setting_end,
+    source: row.source,
+    settingSource: row.setting_source,
+    settingConfidence: row.setting_confidence,
+    settingAuto: row.setting_auto,
+    settingUserLocked: row.setting_user_locked,
+    inferenceStatus: row.inference_status,
+    notes: row.notes,
+    tags: row.tags,
+    status: row.status,
+    color: row.color,
+    spotifyTrackId: row.spotify_track_id,
+    spotifyTrackUri: row.spotify_track_uri,
+    spotifyAlbumId: row.spotify_album_id,
+    spotifyAlbumUri: row.spotify_album_uri,
+    spotifyPlaylistId: row.spotify_playlist_id,
+    spotifyPlaylistName: row.spotify_playlist_name
+  });
 }
 
 function getSpotifyEmbedUrl(entry) {
@@ -1815,6 +1889,7 @@ function App() {
   const [showTimelines, setShowTimelines] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
   const [showRangePanel, setShowRangePanel] = useState(false);
   const [rangeDraft, setRangeDraft] = useState({ raw: "", eraId: "" });
   const [rangeError, setRangeError] = useState("");
@@ -1856,6 +1931,12 @@ function App() {
 
   const [source, setSource] = useState("goodreads");
   const [importFile, setImportFile] = useState(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authStatus, setAuthStatus] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authSession, setAuthSession] = useState(null);
+  const [cloudStatus, setCloudStatus] = useState("");
+  const [cloudReady, setCloudReady] = useState(false);
   const [spotifyPlaylistUrl, setSpotifyPlaylistUrl] = useState("");
   const [spotifyAuth, setSpotifyAuth] = useState(() => {
     try {
@@ -1992,6 +2073,114 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!supabase) {
+      setCloudStatus("Supabase not configured yet.");
+      setCloudReady(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        setCloudStatus("Could not restore sign-in session.");
+        setCloudReady(false);
+        return;
+      }
+      setAuthSession(data.session || null);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
+      setAuthSession(session || null);
+    });
+
+    return () => {
+      cancelled = true;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+    if (!authSession?.user?.id) {
+      setCloudReady(false);
+      setCloudStatus("");
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadCloudEntries() {
+      setCloudStatus("Loading your timeline…");
+      const { data, error } = await supabase
+        .from("entries")
+        .select("*")
+        .eq("user_id", authSession.user.id)
+        .order("created_at", { ascending: false });
+
+      if (cancelled) return;
+
+      if (error) {
+        setCloudStatus("Signed in, but cloud storage is not ready yet.");
+        setCloudReady(false);
+        return;
+      }
+
+      suppressCloudSyncRef.current = true;
+      if (Array.isArray(data) && data.length > 0) {
+        setEntries(data.map(supabaseRowToEntry).filter(Boolean));
+        setCloudStatus(`Loaded ${data.length} saved item${data.length === 1 ? "" : "s"}.`);
+      } else {
+        setCloudStatus("Cloud account is ready. Local entries will sync on your next change.");
+      }
+      setCloudReady(true);
+      window.setTimeout(() => {
+        suppressCloudSyncRef.current = false;
+      }, 0);
+    }
+
+    loadCloudEntries();
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession?.user?.id]);
+
+  useEffect(() => {
+    if (!supabase || !cloudReady || !authSession?.user?.id) return undefined;
+    if (suppressCloudSyncRef.current) return undefined;
+
+    if (cloudSyncTimerRef.current) {
+      window.clearTimeout(cloudSyncTimerRef.current);
+    }
+
+    cloudSyncTimerRef.current = window.setTimeout(async () => {
+      const payload = entriesRef.current.map((entry) => entryToSupabaseRow(entry, authSession.user.id));
+      const { error: deleteError } = await supabase.from("entries").delete().eq("user_id", authSession.user.id);
+      if (deleteError) {
+        setCloudStatus("Could not sync timeline changes to the cloud.");
+        return;
+      }
+      if (payload.length > 0) {
+        const { error: insertError } = await supabase.from("entries").insert(payload);
+        if (insertError) {
+          setCloudStatus("Could not sync timeline changes to the cloud.");
+          return;
+        }
+      }
+      setCloudStatus("Cloud saved.");
+    }, 450);
+
+    return () => {
+      if (cloudSyncTimerRef.current) {
+        window.clearTimeout(cloudSyncTimerRef.current);
+        cloudSyncTimerRef.current = null;
+      }
+    };
+  }, [entries, cloudReady, authSession?.user?.id]);
+
+  useEffect(() => {
     pendingZoomSpanRef.current = timelineState.span;
   }, [timelineState.span]);
 
@@ -2014,6 +2203,7 @@ function App() {
   const titleSearchWrapRef = useRef(null);
   const settingsSheetRef = useRef(null);
   const timelinesSheetRef = useRef(null);
+  const authSheetRef = useRef(null);
   const importPreviewRef = useRef(null);
   const rangeSheetRef = useRef(null);
   const clusterGridRef = useRef(null);
@@ -2046,6 +2236,8 @@ function App() {
   const lastPointerRef = useRef({ x: null, y: null, inside: false });
   const selectedEntryIdRef = useRef(null);
   const popupClosingRef = useRef(false);
+  const suppressCloudSyncRef = useRef(false);
+  const cloudSyncTimerRef = useRef(null);
   const [popupSize, setPopupSize] = useState({ width: 420, height: 320 });
 
   useEffect(() => {
@@ -2188,6 +2380,7 @@ function App() {
         tocPanelRef.current?.contains(target) ||
         addSheetRef.current?.contains(target) ||
         timelinesSheetRef.current?.contains(target) ||
+        authSheetRef.current?.contains(target) ||
         settingsSheetRef.current?.contains(target) ||
         importPreviewRef.current?.contains(target) ||
         rangeSheetRef.current?.contains(target) ||
@@ -2199,6 +2392,7 @@ function App() {
       if (showToc) closeTocPanel();
       if (showAdd) closeAddPanel();
       if (showTimelines) closeTimelinesPanel();
+      if (showAuth) closeAuthPanel();
       if (showSettings) closeSettingsPanel();
       if (importPreview) closeImportPreview();
       if (expandedClusterId && !isClusterInteraction) {
@@ -2213,7 +2407,7 @@ function App() {
 
     window.addEventListener("pointerdown", onPointerDown, { capture: true });
     return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
-  }, [expandedClusterId, gridClusterId, importPreview, selectedEntryId, showAdd, showRangeInlineInput, showSettings, showTimelines, showToc]);
+  }, [expandedClusterId, gridClusterId, importPreview, selectedEntryId, showAdd, showAuth, showRangeInlineInput, showSettings, showTimelines, showToc]);
 
   useEffect(() => {
     if (showRangeInlineInput && rangeInlineInputRef.current) {
@@ -4584,6 +4778,7 @@ function App() {
     setShowAdd(true);
     setShowTimelines(false);
     setShowToc(false);
+    setShowAuth(false);
     setShowSettings(false);
     setShowRangePanel(false);
     setShowRangeInlineInput(false);
@@ -4597,6 +4792,11 @@ function App() {
   function closeTimelinesPanel() {
     setShowTimelines(false);
     setTimelineDraftError("");
+  }
+
+  function closeAuthPanel() {
+    setShowAuth(false);
+    setAuthStatus("");
   }
 
   function closeTocPanel() {
@@ -4641,6 +4841,7 @@ function App() {
     setRangeError("");
     setShowToc(false);
     setShowAdd(false);
+    setShowAuth(false);
     setShowSettings(false);
     setShowRangePanel(false);
     setShowRangeInlineInput(true);
@@ -4661,6 +4862,7 @@ function App() {
       setShowToc(false);
       setShowAdd(false);
       setShowTimelines(false);
+      setShowAuth(false);
       setShowSettings(false);
       setShowRangePanel(false);
       return;
@@ -4673,6 +4875,8 @@ function App() {
         ? showAdd
         : menu === "timelines"
         ? showTimelines
+        : menu === "auth"
+        ? showAuth
         : menu === "settings"
         ? showSettings
         : false;
@@ -4681,6 +4885,7 @@ function App() {
     setShowToc(next && menu === "toc");
     setShowAdd(next && menu === "add");
     setShowTimelines(next && menu === "timelines");
+    setShowAuth(next && menu === "auth");
     setShowSettings(next && menu === "settings");
     setShowRangePanel(false);
     if (!next) setRangeError("");
@@ -4712,6 +4917,47 @@ function App() {
     applyRangeLock(parsed.start, parsed.end);
     setRangeDraft((current) => ({ ...current, raw: formatYearOrRangeInput(parsed.start, parsed.end) }));
     setShowRangeInlineInput(false);
+  }
+
+  async function sendMagicLink(event) {
+    event?.preventDefault?.();
+    if (!supabase) {
+      setAuthStatus("Supabase is not configured yet.");
+      return;
+    }
+    const email = String(authEmail || "").trim();
+    if (!email) {
+      setAuthStatus("Enter your email first.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthStatus("");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : undefined
+      }
+    });
+    setAuthBusy(false);
+    if (error) {
+      setAuthStatus(error.message || "Could not send magic link.");
+      return;
+    }
+    setAuthStatus("Magic link sent. Open it in your email to sign in.");
+  }
+
+  async function signOutCloud() {
+    if (!supabase) return;
+    setAuthBusy(true);
+    const { error } = await supabase.auth.signOut();
+    setAuthBusy(false);
+    if (error) {
+      setAuthStatus(error.message || "Could not sign out.");
+      return;
+    }
+    setAuthStatus("");
+    setShowAuth(false);
+    setCloudReady(false);
   }
 
   function onRangeEraChange(nextEraId) {
@@ -4935,6 +5181,12 @@ function App() {
           +
         </button>
         <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
+      </div>
+
+      <div className="corner-buttons top-right">
+        <button className={`glass-btn auth-btn ${authSession?.user ? "active" : ""}`} type="button" onClick={() => toggleMainMenu("auth")}>
+          {authSession?.user?.email ? authSession.user.email.split("@")[0] : "Sign In"}
+        </button>
       </div>
 
       <div className="corner-buttons bottom-left">
@@ -5284,6 +5536,51 @@ function App() {
                 })
               )}
             </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {showAuth ? (
+        <div className="panel-overlay menu-auth">
+          <aside ref={authSheetRef} className="sheet auth-sheet">
+            <div className="panel-head-row">
+              <h2>Account</h2>
+              <button className="close-x-btn" type="button" onClick={closeAuthPanel} aria-label="Close account">
+                ×
+              </button>
+            </div>
+            {!supabase ? (
+              <div className="auth-copy-block">
+                <p>Supabase is not configured yet.</p>
+                <small>Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to turn on cloud accounts.</small>
+              </div>
+            ) : authSession?.user ? (
+              <div className="auth-copy-block">
+                <p>Signed in as <strong>{authSession.user.email}</strong></p>
+                <small>{cloudStatus || "Your timeline is attached to your account."}</small>
+                <button type="button" className="primary-btn" onClick={signOutCloud} disabled={authBusy}>
+                  {authBusy ? "Signing out…" : "Sign Out"}
+                </button>
+              </div>
+            ) : (
+              <form className="auth-form" onSubmit={sendMagicLink}>
+                <label>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+                <p className="hint">We’ll send a magic link so each tester gets their own saved timeline.</p>
+                <button type="submit" className="primary-btn" disabled={authBusy}>
+                  {authBusy ? "Sending…" : "Send Magic Link"}
+                </button>
+                {authStatus ? <small className="auth-status-text">{authStatus}</small> : null}
+              </form>
+            )}
           </aside>
         </div>
       ) : null}

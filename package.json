@@ -11,6 +11,7 @@
     "desktop": "npm run build && electron ./electron/main.cjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.99.2",
     "jszip": "^3.10.1",
     "papaparse": "^5.5.3",
     "react": "^18.3.1",
