@@ -876,12 +876,13 @@ html, body, #root {
 /* ─── TOC panel ─── */
 .toc-panel {
   position: absolute;
-  right: 0; top: 0; bottom: 0;
-  width: min(380px, 44vw);
+  right: 16px;
+  top: 72px;
+  bottom: 16px;
+  width: min(380px, calc(100vw - 32px));
   z-index: 35;
-  border-left: 1px solid var(--stroke-med);
-  border-top: none; border-right: none; border-bottom: none;
-  border-radius: 0;
+  border: 1px solid var(--stroke-med);
+  border-radius: 16px;
   background: var(--surface);
   padding: 18px 14px 14px;
   display: grid;
@@ -2690,7 +2691,12 @@ html, body, #root {
   .cluster-grid-sheet { width: calc(100vw - 24px); left: 12px; transform: none; }
   .overview-navigator-wrap { width: min(560px, calc(100vw - 200px)); left: 50%; transform: translateX(-50%); }
   .import-progress-hud { width: min(360px, calc(100vw - 56px)); bottom: 114px; }
-  .toc-panel { width: min(340px, 90vw); }
+  .toc-panel {
+    top: 72px;
+    right: 12px;
+    bottom: 12px;
+    width: min(340px, calc(100vw - 24px));
+  }
   .year-grid.compact { grid-template-columns: 1fr; }
   .detail-actions { grid-template-columns: 1fr; }
   .import-preview-setting-grid { grid-template-columns: 1fr; }

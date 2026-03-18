@@ -2195,6 +2195,8 @@ function App() {
   const addButtonRef = useRef(null);
   const zoomDragRef = useRef(null);
   const searchWrapRef = useRef(null);
+  const topLeftControlsRef = useRef(null);
+  const topRightControlsRef = useRef(null);
   const tocPanelRef = useRef(null);
   const tocListRef = useRef(null);
   const tocRailRef = useRef(null);
@@ -2376,6 +2378,8 @@ function App() {
       );
 
       const inProtectedUi =
+        topLeftControlsRef.current?.contains(target) ||
+        topRightControlsRef.current?.contains(target) ||
         searchWrapRef.current?.contains(target) ||
         popupRef.current?.contains(target) ||
         tocPanelRef.current?.contains(target) ||
@@ -5167,14 +5171,17 @@ function App() {
 
       return (
     <div className="timeline-app" data-theme={darkMode ? "dark" : "light"}>
-      <div className="corner-buttons top-left">
+      <div className="corner-buttons top-left" ref={topLeftControlsRef}>
         <button className="glass-btn timeline-menu-btn" type="button" onClick={() => toggleMainMenu("timelines")} title="Timelines">
           TIMELINES
+        </button>
+        <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
+          +
         </button>
         <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
       </div>
 
-      <div className="corner-buttons top-right">
+      <div className="corner-buttons top-right" ref={topRightControlsRef}>
         <button className="glass-btn toc-icon" type="button" onClick={() => toggleMainMenu("toc")} title="Table of contents">
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path d="M8 9h16M8 16h16M8 23h16" />
@@ -5182,9 +5189,6 @@ function App() {
             <circle cx="5" cy="16" r="1.2" />
             <circle cx="5" cy="23" r="1.2" />
           </svg>
-        </button>
-        <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
-          +
         </button>
         <button className={`glass-btn auth-btn ${authSession?.user ? "active" : ""}`} type="button" onClick={() => toggleMainMenu("auth")}>
           {authSession?.user?.email ? authSession.user.email.split("@")[0] : "Sign In"}
