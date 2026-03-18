@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import INITIAL_DATA from "./initialData.json";
 
 const STORAGE_KEY = "timeline-media-log-v6";
+const TIMELINES_STORAGE_KEY = "timeline-presets-v1";
 const LEGACY_STORAGE_KEYS = [
   "timeline-media-log-v5",
   "timeline-media-log-v4",
@@ -14,11 +15,18 @@ const LEGACY_STORAGE_KEYS = [
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || "";
 const BATCH_ENRICHER_URL = String(import.meta.env.VITE_BATCH_ENRICHER_URL || "").trim();
 const USE_SEED_DATA = String(import.meta.env.VITE_USE_SEED_DATA ?? "true").toLowerCase() !== "false";
+const SPOTIFY_CLIENT_ID = String(import.meta.env.VITE_SPOTIFY_CLIENT_ID || "").trim();
+const SPOTIFY_REDIRECT_URI = String(import.meta.env.VITE_SPOTIFY_REDIRECT_URI || "").trim();
+const SPOTIFY_SCOPES = ["playlist-read-private", "playlist-read-collaborative"];
+const SPOTIFY_AUTH_STORAGE_KEY = "timeline-spotify-auth-v1";
+const SPOTIFY_PENDING_STORAGE_KEY = "timeline-spotify-pending-import-v1";
+const SPOTIFY_PKCE_STORAGE_KEY = "timeline-spotify-pkce-v1";
 
 const MEDIA_TYPES = [
   { id: "book", label: "Book", icon: "BK" },
   { id: "movie", label: "Film", icon: "FM" },
   { id: "television", label: "TV", icon: "TV" },
+  { id: "music", label: "Music", icon: "MU" },
   { id: "podcast", label: "Podcast", icon: "PC" },
   { id: "theater", label: "Theater", icon: "TH" },
   { id: "photo", label: "Photo", icon: "PH" },
@@ -53,6 +61,7 @@ const MEDIA_ICON_PATHS = {
   book:       "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z",
   movie:      "M2 8h20M2 16h20M7 2v20M17 2v20M2 2h20v20H2z",
   television: "M2 7h20v14H2zM8 2l4 5 4-5",
+  music:      "M12 3v12.5a2.5 2.5 0 1 1-2-2.45V6.8l8-2.1v8.8a2.5 2.5 0 1 1-2-2.45V3z",
   podcast:    "M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8",
   theater:    "M2 9c0-4 4-6 10-6s10 2 10 6-4 9-10 9S2 13 2 9zM8 12c0 1.1.9 2 2 2s2-.9 2-2M14 12c0 1.1.9 2 2 2s2-.9 2-2M9 9h.01M15 9h.01",
   photo:      "M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
@@ -76,6 +85,7 @@ const MEDIA_TYPE_COLORS = {
   book: "#3f6f52",
   movie: "#2f6ea3",
   television: "#a44b76",
+  music: "#c07a1f",
   podcast: "#6b4aa2",
   theater: "#8a4f34",
   photo: "#1f8fa8",
@@ -86,6 +96,7 @@ const MEDIA_TYPE_PLURALS = {
   book: "Books",
   movie: "Films",
   television: "TV",
+  music: "Music",
   podcast: "Podcasts",
   theater: "Theater",
   photo: "Photos",
@@ -214,6 +225,126 @@ function formatTimelineYear(yearValue) {
   return String(rounded);
 }
 
+function spotifyRedirectUri() {
+  if (SPOTIFY_REDIRECT_URI) return SPOTIFY_REDIRECT_URI;
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function parseSpotifyPlaylistId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const uriMatch = raw.match(/^spotify:playlist:([A-Za-z0-9]+)$/i);
+  if (uriMatch) return uriMatch[1];
+  const idMatch = raw.match(/playlist\/([A-Za-z0-9]+)(?:[/?]|$)/i);
+  if (idMatch) return idMatch[1];
+  const bareMatch = raw.match(/^[A-Za-z0-9]{10,}$/);
+  if (bareMatch) return bareMatch[0];
+  return null;
+}
+
+function parseSpotifyReleaseYear(releaseDate) {
+  const text = String(releaseDate || "").trim();
+  const match = text.match(/^(\d{4})/);
+  if (!match) return null;
+  return Number.parseInt(match[1], 10);
+}
+
+function randomToken(length = 64) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"[byte % 66]).join("");
+}
+
+async function sha256Base64Url(plainText) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plainText));
+  const bytes = Array.from(new Uint8Array(digest));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function exchangeSpotifyCodeForToken(code, verifier) {
+  const body = new URLSearchParams({
+    client_id: SPOTIFY_CLIENT_ID,
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: spotifyRedirectUri(),
+    code_verifier: verifier
+  });
+  const response = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  if (!response.ok) throw new Error("Spotify token exchange failed.");
+  const data = await response.json();
+  return {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + Math.max(60, Number(data.expires_in || 3600) - 30) * 1000
+  };
+}
+
+async function fetchSpotifyApi(url, token) {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  if (response.status === 401) throw new Error("Spotify authorization expired.");
+  if (!response.ok) throw new Error("Spotify request failed.");
+  return response.json();
+}
+
+async function importSpotifyPlaylist(playlistUrl, token, setImportState) {
+  const playlistId = parseSpotifyPlaylistId(playlistUrl);
+  if (!playlistId) throw new Error("Paste a valid Spotify playlist link.");
+
+  const meta = await fetchSpotifyApi(`https://api.spotify.com/v1/playlists/${playlistId}?fields=name,id`, token);
+  const imported = [];
+  let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&offset=0`;
+
+  while (nextUrl) {
+    setImportState((current) => ({
+      phase: "analyzing",
+      message: imported.length > 0 ? `Fetching Spotify playlist (${imported.length} tracks)…` : "Fetching Spotify playlist…"
+    }));
+    const page = await fetchSpotifyApi(nextUrl, token);
+    for (const item of page.items || []) {
+      const track = item?.track;
+      if (!track || track.is_local) continue;
+      const year = parseSpotifyReleaseYear(track.album?.release_date);
+      if (!Number.isFinite(year)) continue;
+      imported.push({
+        mediaType: "music",
+        title: String(track.name || "").trim(),
+        creator: Array.isArray(track.artists) ? track.artists.map((artist) => artist?.name).filter(Boolean).join(", ") : "",
+        productionStart: year,
+        productionEnd: year,
+        settingStart: null,
+        settingEnd: null,
+        source: "spotify",
+        notes: "",
+        tags: [],
+        status: "consumed",
+        spotifyTrackId: track.id || "",
+        spotifyTrackUri: track.uri || "",
+        spotifyPlaylistId: playlistId,
+        spotifyPlaylistName: meta?.name || "",
+        settingSource: null,
+        settingConfidence: null,
+        settingAuto: false,
+        settingUserLocked: false,
+        inferenceStatus: "idle"
+      });
+    }
+    nextUrl = page.next || null;
+  }
+
+  return {
+    fileName: meta?.name ? `${meta.name} (Spotify)` : "Spotify playlist",
+    items: imported
+  };
+}
+
 function getType(typeId) {
   return MEDIA_TYPES.find((item) => item.id === typeId) ?? MEDIA_TYPES[0];
 }
@@ -327,8 +458,25 @@ function normalizeEntry(raw) {
     inferenceStatus: raw.inferenceStatus || (userLocked || hasSetting ? "done" : "idle"),
     notes: typeof raw.notes === "string" ? raw.notes : "",
     tags: Array.isArray(raw.tags) ? raw.tags : [],
-    status: raw.status || "consumed"
+    status: raw.status || "consumed",
+    spotifyTrackId: String(raw.spotifyTrackId || ""),
+    spotifyTrackUri: String(raw.spotifyTrackUri || ""),
+    spotifyAlbumId: String(raw.spotifyAlbumId || ""),
+    spotifyAlbumUri: String(raw.spotifyAlbumUri || ""),
+    spotifyPlaylistId: String(raw.spotifyPlaylistId || ""),
+    spotifyPlaylistName: String(raw.spotifyPlaylistName || "")
   };
+}
+
+function getSpotifyEmbedUrl(entry) {
+  if (!entry) return "";
+  if (entry.spotifyTrackId) return `https://open.spotify.com/embed/track/${encodeURIComponent(entry.spotifyTrackId)}?utm_source=generator`;
+  if (entry.spotifyAlbumId) return `https://open.spotify.com/embed/album/${encodeURIComponent(entry.spotifyAlbumId)}?utm_source=generator`;
+  if (entry.spotifyPlaylistId) return `https://open.spotify.com/embed/playlist/${encodeURIComponent(entry.spotifyPlaylistId)}?utm_source=generator`;
+  const uri = String(entry.spotifyTrackUri || entry.spotifyAlbumUri || "").trim();
+  const uriMatch = uri.match(/^spotify:(track|album):([A-Za-z0-9]+)$/i);
+  if (uriMatch) return `https://open.spotify.com/embed/${uriMatch[1].toLowerCase()}/${encodeURIComponent(uriMatch[2])}?utm_source=generator`;
+  return "";
 }
 
 function parseSearch(query) {
@@ -1614,6 +1762,43 @@ function parseStoredEntries(raw) {
   }
 }
 
+function parseStoredTimelinePresets(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const start = parseManualYearInput(item.start);
+        const hasPresentEnd = String(item.end || "").trim().toLowerCase() === "present";
+        const end = hasPresentEnd ? "present" : parseManualYearInput(item.end);
+        if (!Number.isFinite(start)) return null;
+        if (!(end === "present" || Number.isFinite(end))) return null;
+        const mediaTypes = Array.isArray(item.mediaTypes)
+          ? item.mediaTypes.filter((typeId) => MEDIA_TYPES.some((type) => type.id === typeId))
+          : [];
+        return {
+          id: item.id || toEntryId("timeline"),
+          name: String(item.name || "Untitled Timeline").trim() || "Untitled Timeline",
+          start: Math.round(start),
+          end: end === "present" ? "present" : Math.round(end),
+          mediaTypes
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function formatTimelinePresetRange(preset, presentYear) {
+  if (!preset) return "";
+  const start = formatTimelineYear(preset.start);
+  const end = preset.end === "present" ? "Present" : formatTimelineYear(preset.end ?? presentYear);
+  return `${start} - ${end}`;
+}
+
 function App() {
   const presentYear = useMemo(() => nowYearFraction(), []);
   const [timelineState, setTimelineState] = useState(() => defaultState(presentYear));
@@ -1627,6 +1812,7 @@ function App() {
   const [hoveredClusterId, setHoveredClusterId] = useState(null);
   const [hoveredRangeMarkerId, setHoveredRangeMarkerId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showTimelines, setShowTimelines] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
   const [showRangePanel, setShowRangePanel] = useState(false);
@@ -1670,6 +1856,15 @@ function App() {
 
   const [source, setSource] = useState("goodreads");
   const [importFile, setImportFile] = useState(null);
+  const [spotifyPlaylistUrl, setSpotifyPlaylistUrl] = useState("");
+  const [spotifyAuth, setSpotifyAuth] = useState(() => {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(SPOTIFY_AUTH_STORAGE_KEY) || "null");
+      return stored && stored.accessToken && stored.expiresAt > Date.now() ? stored : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [addDraft, setAddDraft] = useState({
     mediaType: "book",
@@ -1695,6 +1890,11 @@ function App() {
   const preZoomStateRef = useRef(null);
 
   const [darkMode, setDarkMode] = useState(true);
+  const [timelinePresets, setTimelinePresets] = useState(() => parseStoredTimelinePresets(localStorage.getItem(TIMELINES_STORAGE_KEY)) || []);
+  const [openTimelineIds, setOpenTimelineIds] = useState([]);
+  const [focusedTimelineId, setFocusedTimelineId] = useState(null);
+  const [timelineDraft, setTimelineDraft] = useState({ name: "", start: "", end: "Present", mediaTypes: ["book", "movie", "podcast"] });
+  const [timelineDraftError, setTimelineDraftError] = useState("");
   const [inlineNotesOpen, setInlineNotesOpen] = useState(false);
   const [inlineNotesDraft, setInlineNotesDraft] = useState("");
   const [addingTag, setAddingTag] = useState(false);
@@ -1732,6 +1932,66 @@ function App() {
   }, [darkMode]);
 
   useEffect(() => {
+    localStorage.setItem(TIMELINES_STORAGE_KEY, JSON.stringify(timelinePresets));
+  }, [timelinePresets]);
+
+  useEffect(() => {
+    if (spotifyAuth?.accessToken && spotifyAuth?.expiresAt > Date.now()) {
+      sessionStorage.setItem(SPOTIFY_AUTH_STORAGE_KEY, JSON.stringify(spotifyAuth));
+      return;
+    }
+    sessionStorage.removeItem(SPOTIFY_AUTH_STORAGE_KEY);
+  }, [spotifyAuth]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function handleSpotifyCallback() {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const state = params.get("state");
+      const error = params.get("error");
+      if (!code && !error) return;
+
+      const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.hash || ""}`;
+      window.history.replaceState({}, document.title, cleanUrl);
+
+      if (error) {
+        if (!cancelled) setImportState({ phase: "error", message: "Spotify sign-in was cancelled or denied." });
+        return;
+      }
+
+      try {
+        const pkce = JSON.parse(sessionStorage.getItem(SPOTIFY_PKCE_STORAGE_KEY) || "null");
+        if (!pkce?.verifier || pkce.state !== state) throw new Error("Spotify sign-in could not be verified.");
+        const auth = await exchangeSpotifyCodeForToken(code, pkce.verifier);
+        sessionStorage.removeItem(SPOTIFY_PKCE_STORAGE_KEY);
+        if (cancelled) return;
+        setSpotifyAuth(auth);
+        setSource("spotify");
+        const pending = JSON.parse(sessionStorage.getItem(SPOTIFY_PENDING_STORAGE_KEY) || "null");
+        if (pending?.playlistUrl) {
+          setSpotifyPlaylistUrl(pending.playlistUrl);
+          sessionStorage.removeItem(SPOTIFY_PENDING_STORAGE_KEY);
+          await startSpotifyImport(pending.playlistUrl, auth.accessToken);
+        } else {
+          setImportState({ phase: "done", message: "Spotify connected. Paste a playlist link to import." });
+        }
+      } catch (callbackError) {
+        if (!cancelled) {
+          setImportState({ phase: "error", message: callbackError?.message || "Spotify sign-in failed." });
+        }
+      }
+    }
+
+    handleSpotifyCallback();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     pendingZoomSpanRef.current = timelineState.span;
   }, [timelineState.span]);
 
@@ -1753,6 +2013,7 @@ function App() {
   const addSheetRef = useRef(null);
   const titleSearchWrapRef = useRef(null);
   const settingsSheetRef = useRef(null);
+  const timelinesSheetRef = useRef(null);
   const importPreviewRef = useRef(null);
   const rangeSheetRef = useRef(null);
   const clusterGridRef = useRef(null);
@@ -1926,6 +2187,7 @@ function App() {
         popupRef.current?.contains(target) ||
         tocPanelRef.current?.contains(target) ||
         addSheetRef.current?.contains(target) ||
+        timelinesSheetRef.current?.contains(target) ||
         settingsSheetRef.current?.contains(target) ||
         importPreviewRef.current?.contains(target) ||
         rangeSheetRef.current?.contains(target) ||
@@ -1936,6 +2198,7 @@ function App() {
 
       if (showToc) closeTocPanel();
       if (showAdd) closeAddPanel();
+      if (showTimelines) closeTimelinesPanel();
       if (showSettings) closeSettingsPanel();
       if (importPreview) closeImportPreview();
       if (expandedClusterId && !isClusterInteraction) {
@@ -1950,7 +2213,7 @@ function App() {
 
     window.addEventListener("pointerdown", onPointerDown, { capture: true });
     return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
-  }, [expandedClusterId, gridClusterId, importPreview, selectedEntryId, showAdd, showRangeInlineInput, showSettings, showToc]);
+  }, [expandedClusterId, gridClusterId, importPreview, selectedEntryId, showAdd, showRangeInlineInput, showSettings, showTimelines, showToc]);
 
   useEffect(() => {
     if (showRangeInlineInput && rangeInlineInputRef.current) {
@@ -2056,6 +2319,19 @@ function App() {
     () => `${formatTimelineYear(viewStart)} - ${viewEnd >= presentYear - 0.001 ? "Present" : formatTimelineYear(viewEnd)}`,
     [presentYear, viewEnd, viewStart]
   );
+
+  const activeTimelinePreset = useMemo(() => {
+    if (focusedTimelineId) return timelinePresets.find((item) => item.id === focusedTimelineId) || null;
+    const fallbackOpenId = openTimelineIds[openTimelineIds.length - 1];
+    if (fallbackOpenId) return timelinePresets.find((item) => item.id === fallbackOpenId) || null;
+    return null;
+  }, [focusedTimelineId, openTimelineIds, timelinePresets]);
+
+  const visibleCompassTypes = useMemo(() => {
+    const preferred = Array.isArray(activeTimelinePreset?.mediaTypes) ? activeTimelinePreset.mediaTypes.slice(0, 3) : [];
+    if (preferred.length > 0) return preferred;
+    return ["book", "movie", "podcast"];
+  }, [activeTimelinePreset]);
 
   const allKnownYears = useMemo(() => {
     const years = [Math.floor(presentYear)];
@@ -3884,14 +4160,18 @@ function App() {
     setImportState({ phase: "analyzing", message: "Analyzing import file..." });
 
     let imported = [];
+    let importLabel = selectedFile?.name || "";
 
     try {
       if (importSource === "goodreads") {
         const text = await selectedFile.text();
         imported = fromGoodreadsCsv(text);
-      } else {
+      } else if (importSource === "letterboxd") {
         const buffer = await selectedFile.arrayBuffer();
         imported = await fromLetterboxdZip(buffer);
+      } else {
+        setImportState({ phase: "error", message: "That import source is handled directly, not by file upload." });
+        return;
       }
     } catch {
       setImportState({ phase: "error", message: "Could not parse file." });
@@ -4008,7 +4288,7 @@ function App() {
 
     setImportPreview({
       source: importSource,
-      fileName: selectedFile?.name || "",
+      fileName: importLabel,
       items: imported.map((entry) => {
         const key = buildImportDuplicateKey(entry);
         const isExistingDuplicate = existingKeys.has(key);
@@ -4028,12 +4308,103 @@ function App() {
     setImportState({ phase: "idle", message: "" });
   }
 
+  async function beginSpotifyAuth(playlistUrl) {
+    if (!SPOTIFY_CLIENT_ID) {
+      setImportState({ phase: "error", message: "Add VITE_SPOTIFY_CLIENT_ID to enable Spotify import." });
+      return;
+    }
+    const verifier = randomToken(64);
+    const challenge = await sha256Base64Url(verifier);
+    const state = randomToken(24);
+    sessionStorage.setItem(SPOTIFY_PKCE_STORAGE_KEY, JSON.stringify({ verifier, state }));
+    sessionStorage.setItem(SPOTIFY_PENDING_STORAGE_KEY, JSON.stringify({ playlistUrl }));
+    const authUrl = new URL("https://accounts.spotify.com/authorize");
+    authUrl.searchParams.set("client_id", SPOTIFY_CLIENT_ID);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("redirect_uri", spotifyRedirectUri());
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    authUrl.searchParams.set("code_challenge", challenge);
+    authUrl.searchParams.set("state", state);
+    authUrl.searchParams.set("scope", SPOTIFY_SCOPES.join(" "));
+    window.location.assign(authUrl.toString());
+  }
+
+  async function startSpotifyImport(rawPlaylistUrl = spotifyPlaylistUrl, tokenOverride = null) {
+    const playlistUrl = String(rawPlaylistUrl || "").trim();
+    if (!playlistUrl) {
+      setImportState({ phase: "error", message: "Paste a Spotify playlist link first." });
+      return;
+    }
+    if (!parseSpotifyPlaylistId(playlistUrl)) {
+      setImportState({ phase: "error", message: "Paste a valid Spotify playlist link." });
+      return;
+    }
+
+    setSource("spotify");
+    setSpotifyPlaylistUrl(playlistUrl);
+
+    const token = tokenOverride || (spotifyAuth?.expiresAt > Date.now() ? spotifyAuth.accessToken : "");
+    if (!token) {
+      await beginSpotifyAuth(playlistUrl);
+      return;
+    }
+
+    setImportState({ phase: "analyzing", message: "Connecting to Spotify…" });
+    try {
+      const spotifyImport = await importSpotifyPlaylist(playlistUrl, token, setImportState);
+      const imported = spotifyImport.items
+        .map((entry) => ({
+          ...entry,
+          tempId: toEntryId("preview"),
+          productionStart: Number.isFinite(entry.productionStart) ? Math.min(entry.productionStart, Math.floor(presentYear)) : null,
+          productionEnd: Number.isFinite(entry.productionEnd) ? Math.min(entry.productionEnd, Math.floor(presentYear)) : entry.productionStart,
+          settingStart: null,
+          settingEnd: null
+        }))
+        .filter((entry) => entry.title && Number.isFinite(entry.productionStart));
+
+      if (imported.length === 0) {
+        setImportState({ phase: "error", message: "No playable tracks with release dates were found in that playlist." });
+        return;
+      }
+
+      const existingKeys = new Set(entriesRef.current.map(buildImportDuplicateKey));
+      const incomingSeen = new Set();
+      setImportPreview({
+        source: "spotify",
+        fileName: spotifyImport.fileName,
+        items: imported.map((entry) => {
+          const key = buildImportDuplicateKey(entry);
+          const isExistingDuplicate = existingKeys.has(key);
+          const isIncomingDuplicate = incomingSeen.has(key);
+          incomingSeen.add(key);
+          const duplicateStatus = isExistingDuplicate ? "existing" : isIncomingDuplicate ? "batch" : null;
+          return {
+            ...entry,
+            include: duplicateStatus ? false : true,
+            duplicateStatus,
+            settingRangeInput: ""
+          };
+        })
+      });
+      setImportPreviewQuery("");
+      setExpandedImportGenres([]);
+      setImportState({ phase: "idle", message: "" });
+    } catch (spotifyError) {
+      const message = spotifyError?.message || "Spotify import failed.";
+      if (/expired|authorization/i.test(message)) {
+        setSpotifyAuth(null);
+      }
+      setImportState({ phase: "error", message });
+    }
+  }
+
   function triggerImportPicker(importSource) {
     setSource(importSource);
     setImportState({ phase: "idle", message: "" });
     if (importSource === "goodreads") {
       goodreadsInputRef.current?.click();
-    } else {
+    } else if (importSource === "letterboxd") {
       letterboxdInputRef.current?.click();
     }
   }
@@ -4154,7 +4525,7 @@ function App() {
           ...item,
           creator: String(item.creator || item.director || "").trim(),
           director: String(item.director || "").trim(),
-          id: toEntryId(importPreview.source === "goodreads" ? "gr" : "lb"),
+          id: toEntryId(importPreview.source === "goodreads" ? "gr" : importPreview.source === "spotify" ? "sp" : "lb"),
           settingStart: Number.isFinite(nextSettingStart) ? Math.min(nextSettingStart, Math.floor(presentYear)) : null,
           settingEnd: Number.isFinite(nextSettingEnd) ? Math.min(nextSettingEnd, Math.floor(presentYear)) : null,
           settingSource: hasManualSetting ? "manual" : (hasSetting ? "production-fallback" : null),
@@ -4211,6 +4582,7 @@ function App() {
 
   function openAddPanel() {
     setShowAdd(true);
+    setShowTimelines(false);
     setShowToc(false);
     setShowSettings(false);
     setShowRangePanel(false);
@@ -4220,6 +4592,11 @@ function App() {
 
   function closeSettingsPanel() {
     setShowSettings(false);
+  }
+
+  function closeTimelinesPanel() {
+    setShowTimelines(false);
+    setTimelineDraftError("");
   }
 
   function closeTocPanel() {
@@ -4283,6 +4660,7 @@ function App() {
       }
       setShowToc(false);
       setShowAdd(false);
+      setShowTimelines(false);
       setShowSettings(false);
       setShowRangePanel(false);
       return;
@@ -4293,6 +4671,8 @@ function App() {
         ? showToc
         : menu === "add"
         ? showAdd
+        : menu === "timelines"
+        ? showTimelines
         : menu === "settings"
         ? showSettings
         : false;
@@ -4300,6 +4680,7 @@ function App() {
 
     setShowToc(next && menu === "toc");
     setShowAdd(next && menu === "add");
+    setShowTimelines(next && menu === "timelines");
     setShowSettings(next && menu === "settings");
     setShowRangePanel(false);
     if (!next) setRangeError("");
@@ -4372,6 +4753,84 @@ function App() {
     setLockedRange(null);
     setRangeError("");
     setShowRangePanel(false);
+  }
+
+  function resolveTimelinePresetWindow(preset) {
+    if (!preset) return null;
+    const start = Number(preset.start);
+    const rawEnd = preset.end === "present" ? presentYear : Number(preset.end);
+    if (!Number.isFinite(start) || !Number.isFinite(rawEnd)) return null;
+    return {
+      start: Math.min(start, rawEnd),
+      end: Math.max(start, rawEnd)
+    };
+  }
+
+  function focusTimelinePreset(preset) {
+    const windowRange = resolveTimelinePresetWindow(preset);
+    if (!windowRange) return;
+    const span = Math.max(1, windowRange.end - windowRange.start);
+    const padding = Math.max(1, span * 0.08);
+    setFocusedTimelineId(preset.id);
+    animateTimelineToWindow(windowRange.start - padding, span + padding * 2);
+  }
+
+  function toggleTimelinePresetOpen(presetId) {
+    const preset = timelinePresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setOpenTimelineIds((current) => {
+      const exists = current.includes(presetId);
+      const next = exists ? current.filter((id) => id !== presetId) : [...current, presetId];
+      if (!exists) {
+        window.requestAnimationFrame(() => focusTimelinePreset(preset));
+      } else if (focusedTimelineId === presetId) {
+        const fallbackId = next[next.length - 1] || null;
+        setFocusedTimelineId(fallbackId);
+      }
+      return next;
+    });
+  }
+
+  function createTimelinePreset(event) {
+    event.preventDefault();
+    const name = String(timelineDraft.name || "").trim();
+    const start = parseManualYearInput(timelineDraft.start);
+    const endText = String(timelineDraft.end || "").trim();
+    const end = !endText || /^present$/i.test(endText) ? "present" : parseManualYearInput(endText);
+    if (!name) {
+      setTimelineDraftError("Give the timeline a name.");
+      return;
+    }
+    if (!Number.isFinite(start)) {
+      setTimelineDraftError("Enter a valid start year.");
+      return;
+    }
+    if (!(end === "present" || Number.isFinite(end))) {
+      setTimelineDraftError("Use a year or Present for the end.");
+      return;
+    }
+    const nextPreset = {
+      id: toEntryId("timeline"),
+      name,
+      start: Math.round(start),
+      end: end === "present" ? "present" : Math.round(end),
+      mediaTypes: (timelineDraft.mediaTypes || []).slice(0, 8)
+    };
+    setTimelinePresets((current) => [...current, nextPreset]);
+    setOpenTimelineIds((current) => [...current, nextPreset.id]);
+    setTimelineDraft({ name: "", start: "", end: "Present", mediaTypes: ["book", "movie", "podcast"] });
+    setTimelineDraftError("");
+    window.requestAnimationFrame(() => focusTimelinePreset(nextPreset));
+  }
+
+  function toggleTimelineDraftMediaType(typeId) {
+    setTimelineDraft((current) => {
+      const list = Array.isArray(current.mediaTypes) ? current.mediaTypes : [];
+      if (list.includes(typeId)) {
+        return { ...current, mediaTypes: list.filter((id) => id !== typeId) };
+      }
+      return { ...current, mediaTypes: [...list, typeId] };
+    });
   }
 
   function zoomToEra(era) {
@@ -4458,16 +4917,12 @@ function App() {
     };
   }, []);
 
-  return (
+      return (
     <div className="timeline-app" data-theme={darkMode ? "dark" : "light"}>
       <div className="corner-buttons top-left">
-        <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
-          +
+        <button className="glass-btn timeline-menu-btn" type="button" onClick={() => toggleMainMenu("timelines")} title="Timelines">
+          TIMELINES
         </button>
-        <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
-      </div>
-
-      <div className="corner-buttons top-right">
         <button className="glass-btn toc-icon" type="button" onClick={() => toggleMainMenu("toc")} title="Table of contents">
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path d="M8 9h16M8 16h16M8 23h16" />
@@ -4476,12 +4931,16 @@ function App() {
             <circle cx="5" cy="23" r="1.2" />
           </svg>
         </button>
+        <button className="glass-btn" type="button" onClick={() => toggleMainMenu("add")} title="Add media">
+          +
+        </button>
+        <div className="live-range-chip" aria-live="polite">{visibleRangeLabel}</div>
       </div>
 
       <div className="corner-buttons bottom-left">
         <aside className="map-key-panel" aria-label="Map key">
           <div className="map-key-grid">
-            {MEDIA_TYPES.filter((type) => type.id === "book" || type.id === "movie" || type.id === "podcast").map((type) => (
+            {MEDIA_TYPES.filter((type) => visibleCompassTypes.includes(type.id)).map((type) => (
               <button
                 key={type.id}
                 type="button"
@@ -4533,7 +4992,7 @@ function App() {
           </div>
           {showAllMapTypes ? (
             <div className="map-key-more-popover">
-              {MEDIA_TYPES.filter((type) => !["book", "movie", "podcast"].includes(type.id)).map((type) => (
+              {MEDIA_TYPES.filter((type) => !visibleCompassTypes.includes(type.id)).map((type) => (
                 <button
                   key={`extra-${type.id}`}
                   type="button"
@@ -4694,6 +5153,11 @@ function App() {
           </div>
         ) : null}
       </div>
+      {activeTimelinePreset ? (
+        <div className="active-timeline-title">
+          {activeTimelinePreset.name}
+        </div>
+      ) : null}
       {hoveredHeadline ? (
         <div
           className={`hover-headline ${hoveredEraId ? "clickable" : ""}`}
@@ -4706,6 +5170,121 @@ function App() {
         >
           {hoveredHeadline}
           {hoveredSubline ? <span className="hover-subline">{hoveredSubline}</span> : null}
+        </div>
+      ) : null}
+
+      {openTimelineIds.length > 0 ? (
+        <div className="timeline-stack-strips">
+          {openTimelineIds
+            .map((id) => timelinePresets.find((item) => item.id === id))
+            .filter(Boolean)
+            .map((preset) => (
+              <div key={preset.id} className={`timeline-strip ${focusedTimelineId === preset.id ? "active" : ""}`}>
+                <button type="button" className="timeline-strip-main" onClick={() => focusTimelinePreset(preset)}>
+                  <span className="timeline-strip-name">{preset.name}</span>
+                  <span className="timeline-strip-range">{formatTimelinePresetRange(preset, presentYear)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="timeline-strip-close"
+                  onClick={() => {
+                    setOpenTimelineIds((current) => current.filter((id) => id !== preset.id));
+                    if (focusedTimelineId === preset.id) setFocusedTimelineId(null);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+        </div>
+      ) : null}
+
+      {showTimelines ? (
+        <div className="panel-overlay menu-timelines">
+          <aside ref={timelinesSheetRef} className="sheet timelines-sheet">
+            <div className="panel-head-row">
+              <h2>Timelines</h2>
+              <button className="close-x-btn" type="button" onClick={closeTimelinesPanel} aria-label="Close timelines">
+                ×
+              </button>
+            </div>
+            <form className="timeline-preset-form" onSubmit={createTimelinePreset}>
+              <label>
+                <span>Name</span>
+                <input
+                  value={timelineDraft.name}
+                  onChange={(event) => setTimelineDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Angela Davis"
+                />
+              </label>
+              <div className="timeline-preset-years">
+                <label>
+                  <span>Start</span>
+                  <input
+                    value={timelineDraft.start}
+                    onChange={(event) => setTimelineDraft((current) => ({ ...current, start: event.target.value }))}
+                    placeholder="1944"
+                  />
+                </label>
+                <label>
+                  <span>End</span>
+                  <input
+                    value={timelineDraft.end}
+                    onChange={(event) => setTimelineDraft((current) => ({ ...current, end: event.target.value }))}
+                    placeholder="Present"
+                  />
+                </label>
+              </div>
+              <label>
+                <span>Top Media Types</span>
+                <div className="timeline-preset-media-grid">
+                  {MEDIA_TYPES.map((type) => {
+                    const active = (timelineDraft.mediaTypes || []).includes(type.id);
+                    return (
+                      <button
+                        key={`timeline-media-${type.id}`}
+                        type="button"
+                        className={`timeline-media-chip ${active ? "active" : ""}`}
+                        onClick={() => toggleTimelineDraftMediaType(type.id)}
+                      >
+                        <span className="timeline-media-chip-label">{type.label}</span>
+                        {(timelineDraft.mediaTypes || []).includes(type.id) ? (
+                          <span className="timeline-media-chip-order">{(timelineDraft.mediaTypes || []).indexOf(type.id) + 1}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </label>
+              <p className="hint">Use a year range like `1993 - Present` to set the timeline’s natural focus.</p>
+              {timelineDraftError ? <div className="timeline-preset-error">{timelineDraftError}</div> : null}
+              <button type="submit" className="primary-btn">Add Timeline</button>
+            </form>
+            <div className="timeline-preset-list">
+              {timelinePresets.length === 0 ? (
+                <div className="timeline-preset-empty">No saved timelines yet.</div>
+              ) : (
+                timelinePresets.map((preset) => {
+                  const isOpen = openTimelineIds.includes(preset.id);
+                  return (
+                    <div key={preset.id} className="timeline-preset-row">
+                      <button type="button" className="timeline-preset-main" onClick={() => focusTimelinePreset(preset)}>
+                        <strong>{preset.name}</strong>
+                        <small>{formatTimelinePresetRange(preset, presentYear)}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className={`timeline-preset-toggle ${isOpen ? "active" : ""}`}
+                        onClick={() => toggleTimelinePresetOpen(preset.id)}
+                      >
+                        {isOpen ? "Close" : "Open"}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </aside>
         </div>
       ) : null}
 
@@ -5003,6 +5582,20 @@ function App() {
                   <span className="lb-dot lb-dot-2" />
                   <span className="lb-dot lb-dot-3" />
                 </button>
+                <button
+                  type="button"
+                  className={`import-logo-btn spotify-logo-btn ${source === "spotify" ? "active" : ""}`}
+                  onClick={() => {
+                    setSource("spotify");
+                    setImportState({ phase: "idle", message: "" });
+                  }}
+                  aria-label="Spotify playlist"
+                  data-tip="Spotify playlist"
+                >
+                  <span className="spotify-logo-wave spotify-logo-wave-1" />
+                  <span className="spotify-logo-wave spotify-logo-wave-2" />
+                  <span className="spotify-logo-wave spotify-logo-wave-3" />
+                </button>
               </div>
               <input
                 ref={goodreadsInputRef}
@@ -5018,6 +5611,20 @@ function App() {
                 accept=".zip,application/zip"
                 onChange={(event) => onImportFileSelected(event, "letterboxd")}
               />
+              {source === "spotify" ? (
+                <div className="spotify-import-box">
+                  <input
+                    type="text"
+                    value={spotifyPlaylistUrl}
+                    onChange={(event) => setSpotifyPlaylistUrl(event.target.value)}
+                    placeholder="Paste Spotify playlist link"
+                    aria-label="Spotify playlist link"
+                  />
+                  <button type="button" className="primary-btn spotify-import-btn" onClick={() => startSpotifyImport()}>
+                    {spotifyAuth?.expiresAt > Date.now() ? "Import Playlist" : "Connect Spotify & Import"}
+                  </button>
+                </div>
+              ) : null}
               {importState.phase === "error" || importState.phase === "done" ? (
                 <p className={`import-status ${importState.phase === "error" ? "error" : "done"}`}>{importState.message}</p>
               ) : null}
@@ -5036,7 +5643,7 @@ function App() {
               </button>
             </div>
             <p className="hint">
-              {importPreview.fileName || "Import file"} · {importPreview.source === "goodreads" ? "Goodreads" : "Letterboxd"} · {importPreviewSelectedCount}/{importPreview.items.length} selected
+              {importPreview.fileName || "Import file"} · {importPreview.source === "goodreads" ? "Goodreads" : importPreview.source === "spotify" ? "Spotify" : "Letterboxd"} · {importPreviewSelectedCount}/{importPreview.items.length} selected
               {importPreviewDuplicateCount > 0 ? ` · ${importPreviewDuplicateCount} possible duplicates auto-deselected` : ""}
             </p>
             <div className="import-preview-toolbar">
@@ -5054,6 +5661,7 @@ function App() {
             <div className="import-preview-list">
               {(() => {
                 const isGoodreads = importPreview.source === "goodreads";
+                const isSpotify = importPreview.source === "spotify";
                 const searchNeedle = normalizeSearchText(importPreviewQuery);
                 const matchesImportPreviewSearch = (item) => {
                   if (!searchNeedle) return true;
@@ -5073,7 +5681,7 @@ function App() {
 
                 function renderPreviewItem(item) {
                   const canToggleLetterboxdType =
-                    !isGoodreads && (item.mediaType === "movie" || item.mediaType === "television");
+                    !isGoodreads && !isSpotify && (item.mediaType === "movie" || item.mediaType === "television");
                   const settingRangeWarning = getYearRangeInputWarning(item.settingRangeInput);
                   return (
                     <div key={item.tempId} className={`import-preview-row ${item.include ? "" : "excluded"}`}>
@@ -5110,7 +5718,7 @@ function App() {
                         <div className="import-preview-meta-row">
                           <small>
                             {getType(item.mediaType).label}
-                            {item.director ? ` · ${item.director}` : (item.creator ? ` · ${item.creator}` : "")}
+                            {item.creator ? ` · ${item.creator}` : (item.director ? ` · ${item.director}` : "")}
                           </small>
                           {canToggleLetterboxdType ? (
                             <label className="import-preview-type-toggle">
@@ -5150,7 +5758,7 @@ function App() {
                   );
                 }
 
-                if (!isGoodreads) {
+                if (!isGoodreads && !isSpotify) {
                   return (
                     <>
                       {letterboxdGenreGroups.map((group) => {
@@ -5461,6 +6069,21 @@ function App() {
                 <p><strong>Creator:</strong> {selectedEntry.creator || "—"}</p>
                 <p><strong>PRODUCTION:</strong> {selectedEntry.productionStart ?? "—"} {selectedEntry.productionEnd && selectedEntry.productionEnd !== selectedEntry.productionStart ? `→ ${selectedEntry.productionEnd}` : ""}</p>
                 <p><strong>SETTING:</strong> {selectedEntry.settingStart ?? "—"} {selectedEntry.settingEnd && selectedEntry.settingEnd !== selectedEntry.settingStart ? `→ ${selectedEntry.settingEnd}` : ""}</p>
+                {selectedEntry.mediaType === "music" && getSpotifyEmbedUrl(selectedEntry) ? (
+                  <div className="spotify-embed-section">
+                    <div className="spotify-embed-head">
+                      <strong>Listen</strong>
+                      <small>{selectedEntry.source === "spotify" ? "Spotify" : "Spotify embed"}</small>
+                    </div>
+                    <iframe
+                      className="spotify-embed-frame"
+                      src={getSpotifyEmbedUrl(selectedEntry)}
+                      title={`Spotify player for ${selectedEntry.title}`}
+                      loading="lazy"
+                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                    />
+                  </div>
+                ) : null}
 
                 {/* Inline notes */}
                 <div className="inline-notes-section">
