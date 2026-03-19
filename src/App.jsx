@@ -118,6 +118,14 @@ const MEDIA_TYPE_PLURALS = {
 };
 
 const SAMPLE = USE_SEED_DATA ? INITIAL_DATA : [];
+const DEFAULT_PUBLIC_TIMELINE_ID = "timeline-public-test";
+const DEFAULT_PUBLIC_TIMELINE = {
+  id: DEFAULT_PUBLIC_TIMELINE_ID,
+  name: "Test Timeline",
+  start: 1500,
+  end: "present",
+  mediaTypes: ["book", "movie", "podcast"]
+};
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MAX_RENDERED_NODES = 500;
@@ -302,9 +310,28 @@ async function fetchSpotifyApi(url, token) {
       Authorization: `Bearer ${token}`
     }
   });
-  if (response.status === 401) throw new Error("Spotify authorization expired.");
-  if (!response.ok) throw new Error("Spotify request failed.");
-  return response.json();
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (response.status === 401) throw new Error("Spotify authorization expired. Please reconnect Spotify.");
+  if (response.status === 403) {
+    throw new Error(
+      payload?.error?.message
+        ? `Spotify denied access: ${payload.error.message}`
+        : "Spotify denied access to that playlist. It may be private or your app scopes may be incomplete."
+    );
+  }
+  if (response.status === 404) {
+    throw new Error("Spotify could not find that playlist. Double-check the link and make sure the playlist is accessible.");
+  }
+  if (!response.ok) {
+    const detail = payload?.error?.message || payload?.error_description || payload?.message || "";
+    throw new Error(detail ? `Spotify request failed: ${detail}` : `Spotify request failed (${response.status}).`);
+  }
+  return payload;
 }
 
 async function importSpotifyPlaylist(playlistUrl, token, setImportState) {
@@ -1866,6 +1893,12 @@ function parseStoredTimelinePresets(raw) {
   }
 }
 
+function buildInitialTimelinePresets() {
+  const stored = parseStoredTimelinePresets(localStorage.getItem(TIMELINES_STORAGE_KEY));
+  if (stored && stored.length > 0) return stored;
+  return [DEFAULT_PUBLIC_TIMELINE];
+}
+
 function formatTimelinePresetRange(preset, presentYear) {
   if (!preset) return "";
   const start = formatTimelineYear(preset.start);
@@ -1971,9 +2004,9 @@ function App() {
   const preZoomStateRef = useRef(null);
 
   const [darkMode, setDarkMode] = useState(true);
-  const [timelinePresets, setTimelinePresets] = useState(() => parseStoredTimelinePresets(localStorage.getItem(TIMELINES_STORAGE_KEY)) || []);
-  const [openTimelineIds, setOpenTimelineIds] = useState([]);
-  const [focusedTimelineId, setFocusedTimelineId] = useState(null);
+  const [timelinePresets, setTimelinePresets] = useState(() => buildInitialTimelinePresets());
+  const [openTimelineIds, setOpenTimelineIds] = useState(() => [DEFAULT_PUBLIC_TIMELINE_ID]);
+  const [focusedTimelineId, setFocusedTimelineId] = useState(() => DEFAULT_PUBLIC_TIMELINE_ID);
   const [timelineDraft, setTimelineDraft] = useState({ name: "", start: "", end: "Present", mediaTypes: ["book", "movie", "podcast"] });
   const [timelineDraftEndMode, setTimelineDraftEndMode] = useState("present");
   const [timelineDraftError, setTimelineDraftError] = useState("");
@@ -2130,11 +2163,22 @@ function App() {
       }
 
       suppressCloudSyncRef.current = true;
+      setSelectedEntryId(null);
+      setExpandedClusterId(null);
+      setExpandedBranchType(null);
+      setGridClusterId(null);
       if (Array.isArray(data) && data.length > 0) {
         setEntries(data.map(supabaseRowToEntry).filter(Boolean));
         setCloudStatus(`Loaded ${data.length} saved item${data.length === 1 ? "" : "s"}.`);
       } else {
-        setCloudStatus("Cloud account is ready. Local entries will sync on your next change.");
+        setEntries([]);
+        setTimelinePresets((current) =>
+          current.length === 1 && current[0]?.id === DEFAULT_PUBLIC_TIMELINE_ID ? [] : current
+        );
+        setOpenTimelineIds([]);
+        setFocusedTimelineId(null);
+        setShowTimelines(true);
+        setCloudStatus("Cloud account is ready. Create a new timeline to get started.");
       }
       setCloudReady(true);
       window.setTimeout(() => {
@@ -5539,13 +5583,20 @@ function App() {
             </form>
             <div className="timeline-preset-list">
               {timelinePresets.length === 0 ? (
-                <div className="timeline-preset-empty">No saved timelines yet.</div>
+                <div className="timeline-preset-empty">Create a new timeline to get started.</div>
               ) : (
                 timelinePresets.map((preset) => {
                   const isOpen = openTimelineIds.includes(preset.id);
                   return (
                     <div key={preset.id} className="timeline-preset-row">
-                      <button type="button" className="timeline-preset-main" onClick={() => focusTimelinePreset(preset)}>
+                      <button
+                        type="button"
+                        className="timeline-preset-main"
+                        onClick={() => {
+                          focusTimelinePreset(preset);
+                          closeTimelinesPanel();
+                        }}
+                      >
                         <strong>{preset.name}</strong>
                         <small>{formatTimelinePresetRange(preset, presentYear)}</small>
                       </button>
@@ -6761,9 +6812,22 @@ function App() {
 
         <div className="nodes-layer">
           {entries.length === 0 ? (
-            <button className="onboarding-hint" type="button" onClick={openAddPanel}>
-              <p>Log your first piece of media to begin mapping history.</p>
-              <span>Press <strong>+</strong> to add something.</span>
+            <button
+              className="onboarding-hint"
+              type="button"
+              onClick={authSession?.user && timelinePresets.length === 0 ? () => toggleMainMenu("timelines") : openAddPanel}
+            >
+              {authSession?.user && timelinePresets.length === 0 ? (
+                <>
+                  <p>Create a new timeline to get started.</p>
+                  <span>Press <strong>TIMELINES</strong> to name it and set its focus years.</span>
+                </>
+              ) : (
+                <>
+                  <p>Log your first piece of media to begin mapping history.</p>
+                  <span>Press <strong>+</strong> to add something.</span>
+                </>
+              )}
             </button>
           ) : null}
           {visibleRenderItems.map((item) => {

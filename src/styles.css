@@ -488,7 +488,7 @@ html, body, #root {
 /* ─── Search bar ─── */
 .top-center-search {
   position: absolute;
-  top: 16px;
+  top: 54px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 28;
@@ -511,7 +511,7 @@ html, body, #root {
 .top-center-search input:focus { border-color: var(--stroke-strong); }
 .active-timeline-title {
   position: absolute;
-  top: 16px;
+  top: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 29;
@@ -1362,6 +1362,12 @@ html, body, #root {
   font-size: 1.7rem;
   line-height: 1;
   color: #8a4f10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  transform: translateY(-1px);
 }
 .import-logo-btn .lb-dot {
   width: 10px;
@@ -2665,13 +2671,14 @@ html, body, #root {
 /* ─── Responsive ─── */
 @media (max-width: 1180px) {
   .top-center-search {
+    top: 54px;
     left: 280px;
     right: 220px;
     width: auto;
     transform: none;
   }
   .active-timeline-title {
-    top: 62px;
+    top: 14px;
     left: 280px;
     right: 220px;
     max-width: none;
@@ -2732,7 +2739,7 @@ html, body, #root {
     top: 62px;
   }
   .active-timeline-title {
-    top: 106px;
+    top: 16px;
     left: 16px;
     right: 16px;
     text-align: left;
