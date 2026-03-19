@@ -320,8 +320,8 @@ async function fetchSpotifyApi(url, token) {
   if (response.status === 403) {
     throw new Error(
       payload?.error?.message
-        ? `Spotify denied access: ${payload.error.message}`
-        : "Spotify denied access to that playlist. It may be private or your app scopes may be incomplete."
+        ? `Spotify denied access: ${payload.error.message}. If this app is still in Spotify development mode, make sure your Spotify account is added to the app's allowed users and that the playlist is readable by that account.`
+        : "Spotify denied access to that playlist. If this app is still in Spotify development mode, add your Spotify account to the app's allowed users and make sure the playlist is readable by that account."
     );
   }
   if (response.status === 404) {
@@ -2569,6 +2569,12 @@ function App() {
     if (fallbackOpenId) return timelinePresets.find((item) => item.id === fallbackOpenId) || null;
     return null;
   }, [focusedTimelineId, openTimelineIds, timelinePresets]);
+
+  const centerTimelineTitle = useMemo(() => {
+    if (activeTimelinePreset?.name) return activeTimelinePreset.name;
+    if (authSession?.user && timelinePresets.length === 0) return "Create New Timeline";
+    return DEFAULT_PUBLIC_TIMELINE.name;
+  }, [activeTimelinePreset?.name, authSession?.user, timelinePresets.length]);
 
   const visibleCompassTypes = useMemo(() => {
     const preferred = Array.isArray(activeTimelinePreset?.mediaTypes) ? activeTimelinePreset.mediaTypes.slice(0, 3) : [];
@@ -5455,11 +5461,9 @@ function App() {
           </div>
         ) : null}
       </div>
-      {activeTimelinePreset ? (
-        <div className="active-timeline-title">
-          {activeTimelinePreset.name}
-        </div>
-      ) : null}
+      <div className="active-timeline-title">
+        {centerTimelineTitle}
+      </div>
       {hoveredHeadline ? (
         <div
           className={`hover-headline ${hoveredEraId ? "clickable" : ""}`}
